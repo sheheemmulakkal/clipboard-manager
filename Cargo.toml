@@ -1,0 +1,42 @@
+[package]
+name = "clipboard-manager"
+version = "0.1.0"
+edition = "2021"
+
+
+[dependencies]
+x11rb = "0.13"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+chrono = "0.4"
+
+
+[dependencies.gtk4]
+version = "0.9"
+features = ["v4_12"]
+optional = true
+
+
+[dependencies.glib]
+version = "0.20"
+optional = true
+
+
+[dependencies.gdk4]
+version = "0.9"
+optional = true
+
+
+[dependencies.rusqlite]
+version = "0.31"
+optional = true
+features = ["bundled"]
+
+
+[features]
+default = []
+ui = ["gtk4", "glib", "gdk4"]
+persist = ["rusqlite"]
