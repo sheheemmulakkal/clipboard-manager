@@ -6,7 +6,7 @@ fn default_max_history() -> usize {
     50
 }
 fn default_hotkey() -> String {
-    "super+v".to_string()
+    "ctrl+alt+c".to_string()
 }
 fn default_popup_width() -> i32 {
     420

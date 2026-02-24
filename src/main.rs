@@ -6,10 +6,8 @@ mod paste;
 mod store;
 mod ui;
 
-use config::AppConfig;
+use app::App;
 
 fn main() -> anyhow::Result<()> {
-    let config = AppConfig::load()?;
-    println!("Config loaded. Max history: {}", config.max_history);
-    Ok(())
+    App::new()?.run()
 }

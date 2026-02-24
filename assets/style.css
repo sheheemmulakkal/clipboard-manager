@@ -1,1 +1,35 @@
-/* TODO: styles */
+window {
+    background-color: #1e1e2e;
+    border-radius: 10px;
+    border: 1px solid #45475a;
+}
+
+/* GTK4 CSS node for GtkListBox is "list", not "listbox".
+   GtkListBoxRow is "row". Override both so the dark background applies. */
+list {
+    background-color: #1e1e2e;
+}
+
+list > row {
+    background-color: #1e1e2e;
+    outline: none;
+}
+
+.item-row {
+    padding: 8px 12px;
+    border-bottom: 1px solid #313244;
+}
+
+.item-row:hover {
+    background-color: #313244;
+}
+
+.preview-label {
+    color: #cdd6f4;
+    font-size: 13px;
+}
+
+.time-label {
+    color: #6c7086;
+    font-size: 11px;
+}

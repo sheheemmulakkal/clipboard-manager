@@ -37,6 +37,6 @@ features = ["bundled"]
 
 
 [features]
-default = []
+default = ["ui"]
 ui = ["gtk4", "glib", "gdk4"]
 persist = ["rusqlite"]
