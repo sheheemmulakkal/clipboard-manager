@@ -1,1 +1,9 @@
-# TODO: default configuration
+# Clipboard Manager Configuration
+# Copy to ~/.config/clipboard-manager/config.toml to customize
+
+max_history = 50
+hotkey = "ctrl+alt+c"
+popup_width = 420
+popup_max_items = 20
+show_timestamps = true
+deduplicate = true

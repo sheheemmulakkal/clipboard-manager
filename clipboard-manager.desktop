@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Clipboard Manager
+Comment=Clipboard history popup (Ctrl+Alt+C)
+Exec=/usr/local/bin/clipboard-manager
+Icon=edit-paste
+Terminal=false
+Categories=Utility;
+StartupNotify=false
