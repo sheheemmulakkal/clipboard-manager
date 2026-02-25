@@ -1,59 +1,64 @@
 # Clipboard Manager
 
-A lightweight clipboard history manager for Ubuntu/Linux with a GTK4 popup, global hotkey, and system tray icon. Copy anything — code, URLs, text — and retrieve any recent item instantly.
+A clipboard history popup for Ubuntu — press **Super+V** to see everything
+you've recently copied, and click any item to paste it instantly.
 
-## Install dependencies
-
-```bash
-sudo apt-get install -y libgtk-4-dev libglib2.0-dev libdbus-1-dev
-```
-
-## Build
-
-```bash
-cargo build --release
-```
+Inspired by the Windows Win+V experience, built natively for Ubuntu with
+Rust and GTK4.
 
 ## Install
 
+### One-line install (Ubuntu 20.04 / 22.04 / 24.04)
 ```bash
-sudo cp target/release/clipboard-manager /usr/local/bin/
+curl -fsSL https://raw.githubusercontent.com/sheheemmulakkal/clipboard-manager/main/install.sh | bash
 ```
 
-## Run
+Or download the `.deb` directly from the [Releases page](../../releases/latest).
 
-```bash
-clipboard-manager &
-```
-
-The app runs in the background, monitors your clipboard, and adds a tray icon.
+### Requirements
+- Ubuntu 20.04, 22.04, or 24.04 (amd64)
+- X11 session — at login, choose **"Ubuntu on Xorg"**
+- `xdotool` (installed automatically)
 
 ## Usage
+1. The app starts automatically on login (no action needed)
+2. Copy text anywhere as usual
+3. Press **Super+V** — a popup shows your clipboard history
+4. Click any item — it pastes at your cursor
 
-| Action | Result |
-|---|---|
-| **Ctrl+Alt+C** | Open clipboard history popup |
-| Click an item | Copy it back to clipboard |
-| **Escape** / click away | Close popup |
-| Tray → Show History | Open popup |
-| Tray → Quit | Exit the app |
-
-## Config
-
-Copy the default config and edit it:
-
+To start it immediately after install (without logging out):
 ```bash
-mkdir -p ~/.config/clipboard-manager
-cp config/default.toml ~/.config/clipboard-manager/config.toml
+GDK_BACKEND=x11 clipboard-manager &
 ```
 
-| Key | Default | Description |
-|---|---|---|
-| `hotkey` | `ctrl+alt+c` | Global shortcut to open popup |
-| `max_history` | `50` | Number of items to remember |
-| `deduplicate` | `true` | Skip duplicate entries |
-| `popup_width` | `420` | Popup width in pixels |
+## Configuration
+Edit `~/.config/clipboard-manager/config.toml`:
+```toml
+max_history = 50
+hotkey = "super+v"
+paste_delay_ms = 150
+```
 
-## Autostart
+## Uninstall
+```bash
+sudo apt remove clipboard-manager
+```
+Your config and history are kept at `~/.config/clipboard-manager/`.
+Delete that folder to remove everything.
 
-On first run the app writes `~/.config/autostart/clipboard-manager.desktop` so it starts automatically on login.
+## Build from source
+```bash
+# Install dependencies
+sudo apt install libgtk-4-dev libx11-dev libxtst-dev xdotool pkg-config
+
+# Build
+cargo build --release
+
+# Build installable .deb
+cargo install cargo-deb
+cargo deb
+sudo apt install ./target/debian/clipboard-manager_*.deb
+```
+
+## License
+MIT

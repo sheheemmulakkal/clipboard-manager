@@ -1,0 +1,91 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-release:
+    name: Build and Release
+    runs-on: ubuntu-22.04        # pin to LTS for stable GTK4 libs
+
+    permissions:
+      contents: write            # needed to create GitHub Release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            libgtk-4-dev \
+            libglib2.0-dev \
+            libx11-dev \
+            libxtst-dev \
+            libxdo-dev \
+            pkg-config \
+            build-essential \
+            xdotool
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb
+
+      - name: Build release .deb
+        run: cargo deb
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Find .deb file
+        id: deb
+        run: |
+          DEB=$(ls target/debian/*.deb | head -1)
+          echo "PATH=$DEB" >> $GITHUB_OUTPUT
+          echo "NAME=$(basename $DEB)" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release and upload .deb
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Clipboard Manager ${{ steps.version.outputs.VERSION }}
+          body: |
+            ## Install
+
+            ### One-line install (recommended)
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | bash
+            ```
+
+            ### Manual install
+            Download the `.deb` file below and run:
+            ```bash
+            sudo apt install ./clipboard-manager_*.deb
+            ```
+
+            ### What's new
+            See [CHANGELOG.md](CHANGELOG.md) for details.
+
+            ### Requirements
+            - Ubuntu 20.04, 22.04, or 24.04 (amd64)
+            - Runs on X11 session (select "Ubuntu on Xorg" at login)
+            - `xdotool` (installed automatically by the package)
+          files: ${{ steps.deb.outputs.PATH }}
+          fail_on_unmatched_files: true
