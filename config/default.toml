@@ -2,8 +2,27 @@
 # Copy to ~/.config/clipboard-manager/config.toml to customize
 
 max_history = 50
+
+# Hotkey to open the clipboard history popup.
+# Format: modifier+modifier+key  (case-insensitive, order doesn't matter)
+# Modifiers: ctrl (or control), alt, super (or win), shift
+# Keys:      any letter a-z, or: space, return, escape, tab, backspace, f1-f12
+# Examples:
+#   hotkey = "super+v"          # Win+V  (like Windows clipboard history)
+#   hotkey = "ctrl+alt+c"       # Ctrl+Alt+C  (default)
+#   hotkey = "super+shift+v"    # Win+Shift+V
 hotkey = "ctrl+alt+c"
-popup_width = 420
+
+popup_width = 460
 popup_max_items = 20
 show_timestamps = true
 deduplicate = true
+
+# Position the popup near the mouse cursor when opened.
+# Set to false to let the window manager decide placement.
+popup_follow_cursor = true
+
+# Seconds to wait before a "Clear All" becomes permanent.
+# During this window the user can click "Undo" in the popup to restore items.
+# Set to 0 to disable the grace period and clear immediately.
+clear_undo_timeout_secs = 5

@@ -25,9 +25,24 @@ impl Store for MemoryStore {
             return;
         }
         if self.entries.len() >= self.max_history {
-            self.entries.pop_front();
+            // Evict the oldest non-pinned entry
+            if let Some(pos) = self.entries.iter().position(|e| !e.pinned) {
+                self.entries.remove(pos);
+            } else {
+                return; // all pinned, no room
+            }
         }
         self.entries.push_back(entry);
+    }
+
+    fn set_pinned(&mut self, id: u64, pinned: bool) {
+        if let Some(e) = self.entries.iter_mut().find(|e| e.id == id) {
+            e.pinned = pinned;
+        }
+    }
+
+    fn clear_unpinned(&mut self) {
+        self.entries.retain(|e| e.pinned);
     }
 
     fn get_all(&self) -> Vec<&ClipboardEntry> {

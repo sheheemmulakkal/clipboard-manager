@@ -20,6 +20,12 @@ fn default_show_timestamps() -> bool {
 fn default_deduplicate() -> bool {
     true
 }
+fn default_popup_follow_cursor() -> bool {
+    true
+}
+fn default_clear_undo_timeout_secs() -> u64 {
+    5
+}
 
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
@@ -36,6 +42,10 @@ pub struct AppConfig {
     pub show_timestamps: bool,
     #[serde(default = "default_deduplicate")]
     pub deduplicate: bool,
+    #[serde(default = "default_popup_follow_cursor")]
+    pub popup_follow_cursor: bool,
+    #[serde(default = "default_clear_undo_timeout_secs")]
+    pub clear_undo_timeout_secs: u64,
 }
 
 impl Default for AppConfig {
@@ -47,6 +57,8 @@ impl Default for AppConfig {
             popup_max_items: default_popup_max_items(),
             show_timestamps: default_show_timestamps(),
             deduplicate: default_deduplicate(),
+            popup_follow_cursor:     default_popup_follow_cursor(),
+            clear_undo_timeout_secs: default_clear_undo_timeout_secs(),
         }
     }
 }

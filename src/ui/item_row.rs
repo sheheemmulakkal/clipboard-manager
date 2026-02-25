@@ -1,44 +1,108 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use gtk4::prelude::*;
-use gtk4::{GestureClick, Label, ListBoxRow, Orientation};
+use gtk4::{Button, GestureClick, Label, ListBoxRow, Orientation};
 
 use crate::clipboard::ClipboardEntry;
 
+#[derive(Clone)]
+pub enum RowAction {
+    Select,
+    Remove,
+    TogglePin(bool), // new pinned state after toggle
+}
+
 pub fn build_item_row(
     entry: &ClipboardEntry,
-    on_select: impl Fn(u64, String) + 'static,
+    on_action: impl Fn(RowAction) + 'static,
 ) -> ListBoxRow {
     let row = ListBoxRow::new();
     row.add_css_class("item-row");
+    if entry.pinned {
+        row.add_css_class("item-row-pinned");
+    }
 
-    let hbox = gtk4::Box::new(Orientation::Horizontal, 8);
+    let on_action = std::rc::Rc::new(on_action);
 
+    // ── Main horizontal layout ──────────────────────────────────────────
+    let hbox = gtk4::Box::new(Orientation::Horizontal, 6);
+
+    // ── Pin indicator ───────────────────────────────────────────────────
+    if entry.pinned {
+        let pin_indicator = Label::new(Some("󰐃"));
+        pin_indicator.add_css_class("pin-indicator");
+        hbox.append(&pin_indicator);
+    }
+
+    // ── Preview text ────────────────────────────────────────────────────
     let preview = Label::new(Some(entry.preview()));
     preview.add_css_class("preview-label");
     preview.set_hexpand(true);
     preview.set_halign(gtk4::Align::Start);
     preview.set_xalign(0.0);
     preview.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-    preview.set_max_width_chars(55);
+    preview.set_max_width_chars(48);
 
+    // ── Time label ──────────────────────────────────────────────────────
     let time_label = Label::new(Some(&relative_time(entry.copied_at)));
     time_label.add_css_class("time-label");
     time_label.set_halign(gtk4::Align::End);
     time_label.set_valign(gtk4::Align::Center);
 
+    // ── Action buttons (pin + delete) ───────────────────────────────────
+    let btn_box = gtk4::Box::new(Orientation::Horizontal, 2);
+    btn_box.add_css_class("row-actions");
+
+    let pin_label = if entry.pinned { "󰐄" } else { "󰐃" };
+    let pin_btn = Button::with_label(pin_label);
+    pin_btn.add_css_class("row-btn");
+    pin_btn.add_css_class(if entry.pinned { "pin-btn-active" } else { "pin-btn" });
+    pin_btn.set_tooltip_text(Some(if entry.pinned { "Unpin" } else { "Pin" }));
+
+    let del_btn = Button::with_label("󰗨");
+    del_btn.add_css_class("row-btn");
+    del_btn.add_css_class("del-btn");
+    del_btn.set_tooltip_text(Some("Remove"));
+
+    btn_box.append(&pin_btn);
+    btn_box.append(&del_btn);
+
     hbox.append(&preview);
     hbox.append(&time_label);
+    hbox.append(&btn_box);
+
     row.set_child(Some(&hbox));
 
+    // ── Wire up callbacks ───────────────────────────────────────────────
     let id = entry.id;
+    let currently_pinned = entry.pinned;
     let content = entry.content.clone();
 
+    // Click on row body → Select
+    let cb_select = std::rc::Rc::clone(&on_action);
     let gesture = GestureClick::new();
     gesture.connect_released(move |_, _, _, _| {
-        on_select(id, content.clone());
+        cb_select(RowAction::Select);
     });
     row.add_controller(gesture);
+
+    // Pin button
+    let cb_pin = std::rc::Rc::clone(&on_action);
+    pin_btn.connect_clicked(move |_| {
+        cb_pin(RowAction::TogglePin(!currently_pinned));
+    });
+
+    // Delete button
+    let cb_del = std::rc::Rc::clone(&on_action);
+    del_btn.connect_clicked(move |_| {
+        cb_del(RowAction::Remove);
+    });
+
+    // Store id/content as row data so popup can look them up
+    unsafe {
+        row.set_data("entry-id", id);
+        row.set_data("entry-content", content);
+    }
 
     row
 }

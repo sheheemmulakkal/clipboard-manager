@@ -136,31 +136,37 @@ impl Drop for X11HotkeyManager {
 
 // ── hotkey string parser ───────────────────────────────────────────────────────
 
-/// Parse `"ctrl+alt+c"` → `(modifier_mask: u16, keycode: u8)`.
-/// Supported modifiers: ctrl/control, alt, super/win, shift.
-/// Key must be a single ASCII letter (a-z).
+/// Parse `"ctrl+alt+v"` → `(modifier_mask: u16, keycode: u8)`.
+///
+/// Modifiers (case-insensitive): ctrl/control, alt, super/win, shift.
+/// Keys: any single letter a–z, or named keys:
+///   space, return, escape, tab, backspace, f1–f12.
 fn parse_hotkey(
     hotkey: &str,
     first_kc: u8,
     km: &x11rb::protocol::xproto::GetKeyboardMappingReply,
 ) -> Result<(u16, u8)> {
     let mut modifier_mask: u16 = 0;
-    let mut key_char: Option<char> = None;
+    let mut key_keysym: Option<u32> = None;
 
     for part in hotkey.split('+') {
-        match part.trim().to_lowercase().as_str() {
+        let token = part.trim().to_lowercase();
+        match token.as_str() {
             "ctrl" | "control" => modifier_mask |= 0x04, // ControlMask
             "alt"              => modifier_mask |= 0x08, // Mod1Mask
             "super" | "win"    => modifier_mask |= 0x40, // Mod4Mask
             "shift"            => modifier_mask |= 0x01, // ShiftMask
-            s if s.len() == 1  => key_char = s.chars().next(),
-            other              => return Err(anyhow!("Unknown hotkey token: {}", other)),
+            s => {
+                let sym = keysym_for_name(s).ok_or_else(|| {
+                    anyhow!("Invalid hotkey '{}': unknown key '{}'", hotkey, s)
+                })?;
+                key_keysym = Some(sym);
+            }
         }
     }
 
-    let key = key_char.ok_or_else(|| anyhow!("No key letter in hotkey: {}", hotkey))?;
-    // For a–z the X11 keysym equals the ASCII value of the lowercase letter.
-    let keysym = key.to_lowercase().next().unwrap() as u32;
+    let keysym = key_keysym
+        .ok_or_else(|| anyhow!("Invalid hotkey '{}': no key specified", hotkey))?;
 
     let kpk = km.keysyms_per_keycode as usize;
     let total_kcs = (km.keysyms.len() / kpk) as u8;
@@ -170,7 +176,48 @@ fn parse_hotkey(
             let idx = (kc - first_kc) as usize * kpk;
             km.keysyms.get(idx).copied().unwrap_or(0) == keysym
         })
-        .ok_or_else(|| anyhow!("Keycode not found for '{}'", key))?;
+        .ok_or_else(|| {
+            anyhow!("Invalid hotkey '{}': key not found on this keyboard", hotkey)
+        })?;
 
     Ok((modifier_mask, keycode))
+}
+
+/// Map a key name to its X11 keysym value.
+///
+/// Letters: lowercase a–z → keysym == ASCII value (0x61–0x7a).
+/// Named keys follow X11 keysym definitions.
+fn keysym_for_name(name: &str) -> Option<u32> {
+    // Single letter a-z
+    if name.len() == 1 {
+        let c = name.chars().next()?;
+        if c.is_ascii_alphabetic() {
+            return Some(c.to_ascii_lowercase() as u32);
+        }
+        // Single digit 0-9
+        if c.is_ascii_digit() {
+            return Some(c as u32);
+        }
+    }
+
+    match name {
+        "space"     => Some(0x0020),
+        "return"    => Some(0xff0d),
+        "escape"    => Some(0xff1b),
+        "tab"       => Some(0xff09),
+        "backspace" => Some(0xff08),
+        "f1"        => Some(0xffbe),
+        "f2"        => Some(0xffbf),
+        "f3"        => Some(0xffc0),
+        "f4"        => Some(0xffc1),
+        "f5"        => Some(0xffc2),
+        "f6"        => Some(0xffc3),
+        "f7"        => Some(0xffc4),
+        "f8"        => Some(0xffc5),
+        "f9"        => Some(0xffc6),
+        "f10"       => Some(0xffc7),
+        "f11"       => Some(0xffc8),
+        "f12"       => Some(0xffc9),
+        _           => None,
+    }
 }

@@ -10,4 +10,7 @@ pub trait Store: Send + Sync {
     fn clear(&mut self);
     fn contains_content(&self, content: &str) -> bool;
     fn len(&self) -> usize;
+    fn set_pinned(&mut self, id: u64, pinned: bool);
+    /// Remove all entries that are not pinned.
+    fn clear_unpinned(&mut self);
 }

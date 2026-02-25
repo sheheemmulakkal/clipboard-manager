@@ -4,8 +4,39 @@ window {
     border: 1px solid #45475a;
 }
 
-/* GTK4 CSS node for GtkListBox is "list", not "listbox".
-   GtkListBoxRow is "row". Override both so the dark background applies. */
+/* ── Custom drag handle ──────────────────────────────────────────────── */
+.popup-header {
+    background-color: #181825;
+    padding: 10px 14px;
+    border-radius: 9px 9px 0 0;
+    border-bottom: 1px solid #45475a;
+}
+
+.popup-title {
+    color: #cdd6f4;
+    font-size: 13px;
+    font-weight: bold;
+}
+
+/* ── Clear All button (in header) ───────────────────────────────────── */
+.clear-btn {
+    font-size: 11px;
+    padding: 3px 9px;
+    border-radius: 5px;
+    background-color: transparent;
+    border: 1px solid #45475a;
+    color: #6c7086;
+    box-shadow: none;
+    transition: color 150ms ease, border-color 150ms ease, background-color 150ms ease;
+}
+
+.clear-btn:hover {
+    color: #f38ba8;
+    border-color: #f38ba8;
+    background-color: #3b1f22;
+}
+
+/* ── List ────────────────────────────────────────────────────────────── */
 list {
     background-color: #1e1e2e;
 }
@@ -16,14 +47,32 @@ list > row {
 }
 
 .item-row {
-    padding: 8px 12px;
+    padding: 8px 10px;
     border-bottom: 1px solid #313244;
+    min-height: 44px;
+}
+
+/* Pinned rows get a subtle left accent */
+.item-row-pinned {
+    border-left: 3px solid #89b4fa;
+    padding-left: 7px;
 }
 
 .item-row:hover {
     background-color: #313244;
 }
 
+list > row:selected,
+list > row:selected:hover {
+    background-color: #45475a;
+    outline: none;
+}
+
+list > row:focus {
+    outline: none;
+}
+
+/* ── Text labels ─────────────────────────────────────────────────────── */
 .preview-label {
     color: #cdd6f4;
     font-size: 13px;
@@ -32,4 +81,85 @@ list > row {
 .time-label {
     color: #6c7086;
     font-size: 11px;
+    margin-left: 4px;
+}
+
+/* ── Pin indicator (small icon shown on pinned rows) ─────────────────── */
+.pin-indicator {
+    color: #89b4fa;
+    font-size: 11px;
+    margin-right: 4px;
+}
+
+/* ── Undo bar (appears at the bottom after Clear All) ───────────────── */
+.undo-bar {
+    padding: 8px 12px;
+    background-color: #181825;
+    border-top: 1px solid #45475a;
+}
+
+.undo-label {
+    color: #a6adc8;
+    font-size: 12px;
+}
+
+.undo-btn {
+    font-size: 12px;
+    padding: 3px 10px;
+    border-radius: 5px;
+    background-color: #313244;
+    border: 1px solid #45475a;
+    color: #cdd6f4;
+    box-shadow: none;
+    transition: background-color 150ms ease;
+}
+
+.undo-btn:hover {
+    background-color: #45475a;
+}
+
+/* ── Row action buttons ──────────────────────────────────────────────── */
+.row-actions {
+    opacity: 0;
+    transition: opacity 200ms ease;
+}
+
+/* Show buttons when the row is hovered or selected */
+.item-row:hover .row-actions,
+row:selected .row-actions {
+    opacity: 1;
+}
+
+.row-btn {
+    min-width: 0;
+    min-height: 0;
+    padding: 2px 5px;
+    border-radius: 5px;
+    font-size: 13px;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    color: #6c7086;
+    transition: color 150ms ease, background-color 150ms ease;
+}
+
+.row-btn:hover {
+    background-color: #45475a;
+    color: #cdd6f4;
+}
+
+/* Pin button — highlighted when item is pinned */
+.pin-btn-active {
+    color: #89b4fa;
+}
+
+.pin-btn-active:hover {
+    color: #74c7ec;
+    background-color: #313244;
+}
+
+/* Delete button — red on hover */
+.del-btn:hover {
+    color: #f38ba8;
+    background-color: #3b1f22;
 }

@@ -1,22 +1,41 @@
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::time::Duration;
 
-use glib::Propagation;
 use gtk4::prelude::*;
 use gtk4::{
-    Application, CssProvider, EventControllerKey, ListBox, ScrolledWindow, SelectionMode, Window,
+    Application, Button, CssProvider, EventControllerKey, GestureClick, Label, ListBox,
+    Orientation, ScrolledWindow, SelectionMode, Window, WindowHandle,
 };
 
 use crate::clipboard::ClipboardEntry;
-use crate::ui::item_row::build_item_row;
+use crate::ui::item_row::{RowAction, build_item_row};
+
+// ── Undo state ────────────────────────────────────────────────────────────────
+
+struct UndoPending {
+    on_commit: Rc<dyn Fn()>,
+    on_undo:   Rc<dyn Fn()>,
+}
+
+// ── Public struct ─────────────────────────────────────────────────────────────
 
 pub struct ClipboardPopup {
-    window: Window,
-    list_box: ListBox,
+    window:       Window,
+    list_box:     ListBox,
+    row_data:     Rc<RefCell<Vec<(u64, String, bool)>>>,
+    on_select:    Rc<RefCell<Option<Rc<dyn Fn(u64, String)>>>>,
+    on_remove:    Rc<RefCell<Option<Rc<dyn Fn(u64)>>>>,
+    on_pin:       Rc<RefCell<Option<Rc<dyn Fn(u64, bool)>>>>,
+    on_clear:     Rc<RefCell<Option<Rc<dyn Fn()>>>>,
+    undo_bar:     gtk4::Box,
+    undo_label:   Label,
+    undo_pending: Rc<RefCell<Option<UndoPending>>>,
+    undo_tick:    Rc<RefCell<Option<glib::SourceId>>>,
 }
 
 impl ClipboardPopup {
     pub fn new(app: &Application) -> Self {
-        // Load CSS at compile-time; no runtime file path needed.
         let provider = CssProvider::new();
         provider.load_from_string(include_str!("../../assets/style.css"));
         gtk4::style_context_add_provider_for_display(
@@ -27,70 +46,485 @@ impl ClipboardPopup {
 
         let window = Window::builder()
             .application(app)
-            .title("Clipboard")
             .decorated(false)
             .resizable(false)
-            .default_width(420)
-            .default_height(500)
+            .title("Clipboard Manager")
+            .default_width(460)
+            .default_height(520)
             .build();
+
+        // ── Layout ────────────────────────────────────────────────────────────
+        let vbox = gtk4::Box::new(Orientation::Vertical, 0);
+
+        let handle = WindowHandle::new();
+        handle.add_css_class("popup-header");
+
+        let header_row = gtk4::Box::new(Orientation::Horizontal, 0);
+        let title = Label::new(Some("Clipboard Manager"));
+        title.add_css_class("popup-title");
+        title.set_hexpand(true);
+        title.set_halign(gtk4::Align::Start);
+
+        let clear_btn = Button::with_label("Clear All");
+        clear_btn.add_css_class("clear-btn");
+        clear_btn.set_valign(gtk4::Align::Center);
+        clear_btn.set_tooltip_text(Some("Remove all non-pinned items"));
+
+        header_row.append(&title);
+        header_row.append(&clear_btn);
+        handle.set_child(Some(&header_row));
+        vbox.append(&handle);
 
         let scrolled = ScrolledWindow::builder()
             .hscrollbar_policy(gtk4::PolicyType::Never)
             .vscrollbar_policy(gtk4::PolicyType::Automatic)
+            .vexpand(true)
             .build();
 
         let list_box = ListBox::new();
-        list_box.set_selection_mode(SelectionMode::None);
-
+        list_box.set_selection_mode(SelectionMode::Single);
         scrolled.set_child(Some(&list_box));
-        window.set_child(Some(&scrolled));
+        vbox.append(&scrolled);
 
-        // Close on Escape.
-        let key_ctrl = EventControllerKey::new();
-        let win_esc = window.clone();
-        key_ctrl.connect_key_pressed(move |_, key, _, _| {
-            if key == gdk4::Key::Escape {
-                win_esc.set_visible(false);
-                Propagation::Stop
-            } else {
-                Propagation::Proceed
-            }
-        });
-        window.add_controller(key_ctrl);
+        // ── Undo bar ──────────────────────────────────────────────────────────
+        let undo_bar   = gtk4::Box::new(Orientation::Horizontal, 8);
+        undo_bar.add_css_class("undo-bar");
+        let undo_label = Label::new(None);
+        undo_label.add_css_class("undo-label");
+        undo_label.set_hexpand(true);
+        undo_label.set_halign(gtk4::Align::Start);
+        let undo_btn = Button::with_label("Undo");
+        undo_btn.add_css_class("undo-btn");
+        undo_btn.set_valign(gtk4::Align::Center);
+        undo_bar.append(&undo_label);
+        undo_bar.append(&undo_btn);
+        undo_bar.set_visible(false);
+        vbox.append(&undo_bar);
 
-        // Close when the window loses focus.
-        window.connect_is_active_notify(|win| {
-            if !win.is_active() {
-                win.set_visible(false);
-            }
-        });
+        window.set_child(Some(&vbox));
 
-        Self { window, list_box }
+        // ── Shared state ──────────────────────────────────────────────────────
+        let row_data:     Rc<RefCell<Vec<(u64, String, bool)>>>         = Rc::new(RefCell::new(vec![]));
+        let on_select:    Rc<RefCell<Option<Rc<dyn Fn(u64, String)>>>> = Rc::new(RefCell::new(None));
+        let on_remove:    Rc<RefCell<Option<Rc<dyn Fn(u64)>>>>         = Rc::new(RefCell::new(None));
+        let on_pin:       Rc<RefCell<Option<Rc<dyn Fn(u64, bool)>>>>   = Rc::new(RefCell::new(None));
+        let on_clear:     Rc<RefCell<Option<Rc<dyn Fn()>>>>            = Rc::new(RefCell::new(None));
+        let undo_pending: Rc<RefCell<Option<UndoPending>>>             = Rc::new(RefCell::new(None));
+        let undo_tick:    Rc<RefCell<Option<glib::SourceId>>>          = Rc::new(RefCell::new(None));
+
+        // ── Drag tracking ─────────────────────────────────────────────────────
+        //
+        // When the user drags the header, WindowHandle calls begin_move_drag()
+        // which hands the pointer grab to the WM.  GTK cancels its own gesture
+        // (no connect_released fires).  On some compositors this briefly
+        // de-activates the window, falsely triggering "close on focus loss".
+        //
+        // Strategy:
+        //   • A capture-phase GestureClick on the whole window sets `drag_held`
+        //     on button-1 press and clears it on button-1 release.
+        //   • connect_released fires for normal in-window clicks (pin, delete,
+        //     clear, undo, row selection) — drag_held is cleared before any
+        //     callback that could hide the window executes.
+        //   • For a WindowHandle drag, GTK cancels our gesture → released never
+        //     fires → drag_held stays true.
+        //   • is_active_notify checks drag_held:
+        //       - false → genuine app-switch → close immediately
+        //       - true  → possible drag → start a 50 ms poll
+        //   • The poll detects the physical button release via x11rb
+        //     query_pointer (no GTK event needed), waits a 200 ms WM-refocus
+        //     grace period, then closes only if the window is still inactive.
+        let drag_held: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+
+        {
+            let gc = GestureClick::new();
+            gc.set_button(1); // left button only
+            gc.set_propagation_phase(gtk4::PropagationPhase::Capture);
+
+            let dh = Rc::clone(&drag_held);
+            gc.connect_pressed(move |_, _, _, _| { dh.set(true); });
+
+            let dh = Rc::clone(&drag_held);
+            gc.connect_released(move |_, _, _, _| { dh.set(false); });
+
+            // connect_cancel fires when the WM takes the pointer (WindowHandle
+            // drag).  We intentionally do NOT clear drag_held here — the button
+            // is still physically held.  The poll below will detect the release.
+
+            window.add_controller(gc);
+        }
+
+        // ── Wire: Clear All ───────────────────────────────────────────────────
+        {
+            let oc = Rc::clone(&on_clear);
+            clear_btn.connect_clicked(move |_| {
+                let cb = oc.borrow().as_ref().map(Rc::clone);
+                if let Some(cb) = cb { cb(); }
+            });
+        }
+
+        // ── Wire: Undo button ─────────────────────────────────────────────────
+        {
+            let up  = Rc::clone(&undo_pending);
+            let ut  = Rc::clone(&undo_tick);
+            let bar = undo_bar.clone();
+            undo_btn.connect_clicked(move |_| {
+                cancel_tick(&ut);
+                let state = up.borrow_mut().take();
+                bar.set_visible(false);
+                if let Some(s) = state { (s.on_undo)(); }
+            });
+        }
+
+        // ── Keyboard handler ──────────────────────────────────────────────────
+        {
+            let key_ctrl = EventControllerKey::new();
+            key_ctrl.set_propagation_phase(gtk4::PropagationPhase::Capture);
+
+            let win_ref = window.clone();
+            let lb      = list_box.clone();
+            let rd      = Rc::clone(&row_data);
+            let os      = Rc::clone(&on_select);
+
+            key_ctrl.connect_key_pressed(move |_, key, _, _| {
+                use glib::Propagation;
+                match key {
+                    k if k == gdk4::Key::Escape => {
+                        win_ref.set_visible(false);
+                        Propagation::Stop
+                    }
+                    k if k == gdk4::Key::Up => {
+                        let idx  = lb.selected_row().map(|r| r.index()).unwrap_or(0);
+                        let prev = if idx > 0 { idx - 1 } else { 0 };
+                        if let Some(row) = lb.row_at_index(prev) {
+                            lb.select_row(Some(&row));
+                            row.grab_focus();
+                        }
+                        Propagation::Stop
+                    }
+                    k if k == gdk4::Key::Down => {
+                        let next = lb.selected_row().map(|r| r.index() + 1).unwrap_or(0);
+                        if let Some(row) = lb.row_at_index(next) {
+                            lb.select_row(Some(&row));
+                            row.grab_focus();
+                        }
+                        Propagation::Stop
+                    }
+                    k if k == gdk4::Key::Return || k == gdk4::Key::KP_Enter => {
+                        if let Some(row) = lb.selected_row() {
+                            let idx = row.index() as usize;
+                            let (id, content) = {
+                                let data = rd.borrow();
+                                data.get(idx).map(|(id, c, _)| (*id, c.clone()))
+                            }
+                            .unwrap_or_default();
+                            let cb = os.borrow().as_ref().map(Rc::clone);
+                            if let Some(cb) = cb { cb(id, content); }
+                        }
+                        Propagation::Stop
+                    }
+                    _ => Propagation::Proceed,
+                }
+            });
+            window.add_controller(key_ctrl);
+        }
+
+        // ── Focus-loss handler — drag-aware ───────────────────────────────────
+        {
+            let up   = Rc::clone(&undo_pending);
+            let ut   = Rc::clone(&undo_tick);
+            let bar  = undo_bar.clone();
+            let dh   = Rc::clone(&drag_held);
+            // Source ID of any running drag-end poll, shared with the notify handler.
+            let poll: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
+            let poll_outer = Rc::clone(&poll);
+
+            window.connect_is_active_notify(move |win| {
+                if win.is_active() {
+                    // Window re-activated (drag ended and WM refocused us).
+                    // Cancel any in-flight drag-end poll.
+                    if let Some(id) = poll_outer.borrow_mut().take() {
+                        id.remove();
+                    }
+                    return;
+                }
+
+                // Window lost focus.
+                if dh.get() {
+                    // Left button is physically held — this looks like a drag.
+                    // Don't close yet; instead poll every 50 ms.
+                    let win_c  = win.clone();
+                    let dh_c   = Rc::clone(&dh);
+                    let up_c   = Rc::clone(&up);
+                    let ut_c   = Rc::clone(&ut);
+                    let bar_c  = bar.clone();
+                    let poll_c = Rc::clone(&poll_outer);
+                    // Ticks since the button was released (grace period counter).
+                    let grace  = Rc::new(Cell::new(0u8));
+
+                    let id = glib::timeout_add_local(Duration::from_millis(50), move || {
+                        // ── Window became active again → drag ended cleanly ───
+                        if win_c.is_active() {
+                            dh_c.set(false);
+                            *poll_c.borrow_mut() = None;
+                            return glib::ControlFlow::Break;
+                        }
+
+                        // ── Button still held? poll x11rb for physical state ──
+                        if dh_c.get() {
+                            if !x11rb_button1_held() {
+                                // Physical release detected; begin grace period.
+                                dh_c.set(false);
+                                grace.set(0);
+                            }
+                            // Whether we just detected release or not, check below.
+                        }
+
+                        // ── Button released — count 200 ms grace period ───────
+                        if !dh_c.get() {
+                            let g = grace.get() + 1;
+                            grace.set(g);
+                            // 4 ticks × 50 ms = 200 ms for the WM to re-activate us.
+                            if g >= 4 {
+                                // Still not active after grace period → close.
+                                do_close(&win_c, &ut_c, &up_c, &bar_c);
+                                *poll_c.borrow_mut() = None;
+                                return glib::ControlFlow::Break;
+                            }
+                        }
+
+                        glib::ControlFlow::Continue
+                    });
+
+                    *poll_outer.borrow_mut() = Some(id);
+                } else {
+                    // No button held → genuine app-switch → close immediately.
+                    do_close(win, &ut, &up, &bar);
+                }
+            });
+        }
+
+        Self {
+            window, list_box, row_data,
+            on_select, on_remove, on_pin, on_clear,
+            undo_bar, undo_label, undo_pending, undo_tick,
+        }
     }
 
-    /// Clears the list and fills it with `entries` newest-first.
+    // ── populate ──────────────────────────────────────────────────────────────
+
     pub fn populate(
         &self,
-        entries: &[ClipboardEntry],
+        entries:   &[ClipboardEntry],
         on_select: impl Fn(u64, String) + 'static,
+        on_remove: impl Fn(u64)         + 'static,
+        on_pin:    impl Fn(u64, bool)   + 'static,
+        on_clear:  impl Fn()            + 'static,
     ) {
+        // Cancel any in-flight undo timer (no commit/undo — caller owns store state).
+        cancel_tick(&self.undo_tick);
+        *self.undo_pending.borrow_mut() = None;
+        self.undo_bar.set_visible(false);
+
         while let Some(child) = self.list_box.first_child() {
             self.list_box.remove(&child);
         }
 
-        let on_select = Rc::new(on_select);
-        for entry in entries.iter().rev() {
-            let cb = Rc::clone(&on_select);
-            let row = build_item_row(entry, move |id, content| cb(id, content));
+        let on_select: Rc<dyn Fn(u64, String)> = Rc::new(on_select);
+        let on_remove: Rc<dyn Fn(u64)>         = Rc::new(on_remove);
+        let on_pin:    Rc<dyn Fn(u64, bool)>   = Rc::new(on_pin);
+        let on_clear:  Rc<dyn Fn()>            = Rc::new(on_clear);
+
+        *self.on_select.borrow_mut() = Some(Rc::clone(&on_select));
+        *self.on_remove.borrow_mut() = Some(Rc::clone(&on_remove));
+        *self.on_pin.borrow_mut()    = Some(Rc::clone(&on_pin));
+        *self.on_clear.borrow_mut()  = Some(Rc::clone(&on_clear));
+
+        let mut data = self.row_data.borrow_mut();
+        data.clear();
+
+        for entry in entries {
+            data.push((entry.id, entry.content.clone(), entry.pinned));
+
+            let id      = entry.id;
+            let content = entry.content.clone();
+            let cb_sel  = Rc::clone(&on_select);
+            let cb_rm   = Rc::clone(&on_remove);
+            let cb_pin  = Rc::clone(&on_pin);
+
+            let row = build_item_row(entry, move |action| match action {
+                RowAction::Select            => cb_sel(id, content.clone()),
+                RowAction::Remove            => cb_rm(id),
+                RowAction::TogglePin(pinned) => cb_pin(id, pinned),
+            });
             self.list_box.append(&row);
+        }
+        drop(data);
+
+        if let Some(first) = self.list_box.row_at_index(0) {
+            self.list_box.select_row(Some(&first));
         }
     }
 
+    // ── show_undo_bar ─────────────────────────────────────────────────────────
+
+    pub fn show_undo_bar(
+        &self,
+        count:        usize,
+        timeout_secs: u64,
+        on_undo:      impl Fn() + 'static,
+        on_commit:    impl Fn() + 'static,
+    ) {
+        // Remove non-pinned rows from the live display (optimistic clear).
+        let mut idx = 0i32;
+        loop {
+            match self.list_box.row_at_index(idx) {
+                None => break,
+                Some(row) => {
+                    let pinned = self.row_data
+                        .borrow()
+                        .get(idx as usize)
+                        .map(|(_, _, p)| *p)
+                        .unwrap_or(false);
+                    if pinned { idx += 1; } else { self.list_box.remove(&row); }
+                }
+            }
+        }
+        self.row_data.borrow_mut().retain(|(_, _, pinned)| *pinned);
+
+        let noun = if count == 1 { "item" } else { "items" };
+        self.undo_label.set_text(&format!("{count} {noun} cleared  ·  Undo ({timeout_secs}s)"));
+        self.undo_bar.set_visible(true);
+
+        let on_commit: Rc<dyn Fn()> = Rc::new(on_commit);
+        let on_undo:   Rc<dyn Fn()> = Rc::new(on_undo);
+
+        *self.undo_pending.borrow_mut() = Some(UndoPending {
+            on_commit: Rc::clone(&on_commit),
+            on_undo:   Rc::clone(&on_undo),
+        });
+
+        let remaining = Rc::new(Cell::new(timeout_secs));
+        let up  = Rc::clone(&self.undo_pending);
+        let ut  = Rc::clone(&self.undo_tick);
+        let bar = self.undo_bar.clone();
+        let lbl = self.undo_label.clone();
+        let noun_s = noun.to_string();
+
+        let tick_id = glib::timeout_add_local(Duration::from_secs(1), move || {
+            let rem = remaining.get().saturating_sub(1);
+            remaining.set(rem);
+            if rem == 0 {
+                bar.set_visible(false);
+                let state = up.borrow_mut().take();
+                *ut.borrow_mut() = None;
+                if let Some(s) = state { (s.on_commit)(); }
+                glib::ControlFlow::Break
+            } else {
+                lbl.set_text(&format!("{count} {noun_s} cleared  ·  Undo ({rem}s)"));
+                glib::ControlFlow::Continue
+            }
+        });
+
+        *self.undo_tick.borrow_mut() = Some(tick_id);
+    }
+
+    // ── show / hide ───────────────────────────────────────────────────────────
+
     pub fn show_at_cursor(&self) {
+        let cursor = cursor_position_x11();
         self.window.present();
+        let lb  = self.list_box.clone();
+        let win = self.window.clone();
+        glib::timeout_add_local_once(Duration::from_millis(50), move || {
+            if let Some(first) = lb.row_at_index(0) { first.grab_focus(); }
+            if let Some((cx, cy)) = cursor { move_window_near_cursor(&win, cx, cy); }
+        });
+    }
+
+    pub fn show_centered(&self) {
+        self.window.present();
+        let lb = self.list_box.clone();
+        glib::timeout_add_local_once(Duration::from_millis(0), move || {
+            if let Some(first) = lb.row_at_index(0) { first.grab_focus(); }
+        });
     }
 
     pub fn hide(&self) {
         self.window.set_visible(false);
     }
+}
+
+// ── Close helper ──────────────────────────────────────────────────────────────
+
+/// Hide the window and commit any pending undo state.
+fn do_close(
+    win: &Window,
+    ut:  &Rc<RefCell<Option<glib::SourceId>>>,
+    up:  &Rc<RefCell<Option<UndoPending>>>,
+    bar: &gtk4::Box,
+) {
+    win.set_visible(false);
+    cancel_tick(ut);
+    let state = up.borrow_mut().take();
+    bar.set_visible(false);
+    if let Some(s) = state { (s.on_commit)(); }
+}
+
+// ── X11 helpers ───────────────────────────────────────────────────────────────
+
+fn cancel_tick(ut: &Rc<RefCell<Option<glib::SourceId>>>) {
+    if let Some(id) = ut.borrow_mut().take() { id.remove(); }
+}
+
+/// Returns true if mouse button 1 (left) is currently held down.
+/// Used by the drag-detection poll to know when the WM move has ended.
+fn x11rb_button1_held() -> bool {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::{ConnectionExt, KeyButMask};
+    use x11rb::rust_connection::RustConnection;
+    let Ok((conn, screen_num)) = RustConnection::connect(None) else { return false };
+    let root = conn.setup().roots[screen_num].root;
+    let cookie = match conn.query_pointer(root) {
+        Ok(c)  => c,
+        Err(_) => return false,
+    };
+    let reply = match cookie.reply() {
+        Ok(r)  => r,
+        Err(_) => return false,
+    };
+    reply.mask.contains(KeyButMask::BUTTON1)
+}
+
+fn cursor_position_x11() -> Option<(i16, i16)> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::ConnectionExt;
+    use x11rb::rust_connection::RustConnection;
+    let (conn, screen_num) = RustConnection::connect(None).ok()?;
+    let root  = conn.setup().roots[screen_num].root;
+    let reply = conn.query_pointer(root).ok()?.reply().ok()?;
+    Some((reply.root_x, reply.root_y))
+}
+
+fn move_window_near_cursor(win: &Window, cx: i16, cy: i16) {
+    let w: i32 = 460;
+    let h: i32 = 520;
+    let (sw, sh) = screen_dimensions().unwrap_or((1920, 1080));
+    let mut x = cx as i32 + 4;
+    let mut y = cy as i32 + 4;
+    if x + w > sw { x = sw - w - 8; }
+    if y + h > sh { y = sh - h - 8; }
+    if x < 0 { x = 4; }
+    if y < 0 { y = 4; }
+    let _ = std::process::Command::new("xdotool")
+        .args(["getactivewindow", "windowmove", &x.to_string(), &y.to_string()])
+        .spawn();
+    let _ = win;
+}
+
+fn screen_dimensions() -> Option<(i32, i32)> {
+    use x11rb::connection::Connection;
+    use x11rb::rust_connection::RustConnection;
+    let (conn, screen_num) = RustConnection::connect(None).ok()?;
+    let screen = &conn.setup().roots[screen_num];
+    Some((screen.width_in_pixels as i32, screen.height_in_pixels as i32))
 }
