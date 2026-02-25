@@ -1,0 +1,17 @@
+#!/bin/bash
+set -e
+
+# Kill running instances gracefully.
+# Use killall (matches exact process name) instead of pkill -f (matches full
+# command line, which would also match "apt remove clipboard-manager" and kill
+# the package manager itself).
+killall -q clipboard-manager 2>/dev/null || true
+
+echo ""
+echo "  Clipboard Manager has been removed."
+echo "  Your clipboard history and config files are kept at:"
+echo "    ~/.config/clipboard-manager/"
+echo "  Delete that folder manually if you want a clean uninstall."
+echo ""
+
+exit 0

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Clipboard Manager
+Comment=Clipboard history at your fingertips — press Super+V
+Exec=clipboard-manager
+Icon=edit-paste
+Terminal=false
+Categories=Utility;GTK;
+Keywords=clipboard;copy;paste;history;
+StartupNotify=false

@@ -2,6 +2,10 @@
 name = "clipboard-manager"
 version = "0.1.0"
 edition = "2021"
+description = "Clipboard history manager for Ubuntu — press Super+V to paste"
+license = "MIT"
+readme = "README.md"
+homepage = "https://github.com/yourname/clipboard-manager"
 
 
 [dependencies]
@@ -42,3 +46,44 @@ features = ["bundled"]
 default = ["ui"]
 ui = ["gtk4", "glib", "gdk4"]
 persist = ["rusqlite"]
+
+
+# Optimize release builds for size
+[profile.release]
+opt-level = "z"       # optimize for binary size
+lto = true            # link-time optimization
+codegen-units = 1     # better optimization
+strip = true          # strip debug symbols
+
+
+[package.metadata.deb]
+maintainer = "Your Name <you@example.com>"
+copyright = "2025, Your Name"
+license-file = ["LICENSE", "0"]
+extended-description = """\
+Clipboard Manager runs silently in the background and captures your \
+clipboard history. Press Super+V at any time to see a popup list of \
+your recent clipboard items and paste any of them into the currently \
+focused window. Similar to the Windows Win+V experience.\
+"""
+depends = "$auto, xdotool, libgtk-4-1, libglib2.0-0"
+section = "utils"
+priority = "optional"
+assets = [
+  # The compiled binary → /usr/bin/
+  ["target/release/clipboard-manager", "usr/bin/", "755"],
+  # App launcher (shows in GNOME app drawer)
+  ["packaging/clipboard-manager.desktop", "usr/share/applications/", "644"],
+  # Autostart entry (starts on login for all users)
+  ["packaging/clipboard-manager-autostart.desktop", "etc/xdg/autostart/", "644"],
+  # Man page
+  ["packaging/clipboard-manager.1", "usr/share/man/man1/", "644"],
+  # Default config (installed as example, not overwritten on upgrade)
+  ["config/default.toml", "usr/share/doc/clipboard-manager/config.example.toml", "644"],
+  # README
+  ["README.md", "usr/share/doc/clipboard-manager/README", "644"],
+]
+maintainer-scripts = "packaging/debian"
+
+# conf-files lists files that dpkg will NOT overwrite on upgrade
+# (we don't list user's ~/.config here — that's not our job)

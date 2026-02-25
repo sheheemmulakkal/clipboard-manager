@@ -1,0 +1,10 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+    remove|purge)
+        rm -f /etc/xdg/autostart/clipboard-manager-autostart.desktop
+        ;;
+esac
+
+exit 0

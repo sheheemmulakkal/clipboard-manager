@@ -1,0 +1,17 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Clipboard Manager
+Comment=Clipboard history daemon — runs in background
+Exec=clipboard-manager
+Icon=edit-paste
+Terminal=false
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=3
+Categories=Utility;
+
+# NoDisplay=true means it won't show in the autostart GUI as a separate
+# entry (since it's already in the app drawer from the .desktop above)
+# X-GNOME-Autostart-Delay=3 gives the desktop 3 seconds to settle first
