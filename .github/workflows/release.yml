@@ -29,6 +29,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
+            ~/.cargo/bin
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
@@ -40,13 +41,14 @@ jobs:
             libglib2.0-dev \
             libx11-dev \
             libxtst-dev \
-            libxdo-dev \
             pkg-config \
-            build-essential \
-            xdotool
+            build-essential
 
       - name: Install cargo-deb
-        run: cargo install cargo-deb
+        run: |
+          if ! command -v cargo-deb &>/dev/null; then
+            cargo install --locked cargo-deb
+          fi
 
       - name: Build release .deb
         run: cargo deb
@@ -59,7 +61,7 @@ jobs:
         id: deb
         run: |
           DEB=$(ls target/debian/*.deb | head -1)
-          echo "PATH=$DEB" >> $GITHUB_OUTPUT
+          echo "DEB_PATH=$DEB" >> $GITHUB_OUTPUT
           echo "NAME=$(basename $DEB)" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release and upload .deb
@@ -80,12 +82,11 @@ jobs:
             sudo apt install ./clipboard-manager_*.deb
             ```
 
-            ### What's new
-            See [CHANGELOG.md](CHANGELOG.md) for details.
-
             ### Requirements
             - Ubuntu 20.04, 22.04, or 24.04 (amd64)
-            - Runs on X11 session (select "Ubuntu on Xorg" at login)
-            - `xdotool` (installed automatically by the package)
-          files: ${{ steps.deb.outputs.PATH }}
+            - X11 session — at login, select **"Ubuntu on Xorg"**
+
+            ### What's new
+            See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
+          files: ${{ steps.deb.outputs.DEB_PATH }}
           fail_on_unmatched_files: true

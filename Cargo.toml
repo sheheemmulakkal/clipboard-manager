@@ -1,15 +1,15 @@
 [package]
 name = "clipboard-manager"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
-description = "Clipboard history manager for Ubuntu — press Super+V to paste"
+description = "Clipboard history manager for Ubuntu — press Ctrl+Alt+C to open clipboard history"
 license = "MIT"
 readme = "README.md"
-homepage = "https://github.com/yourname/clipboard-manager"
+homepage = "https://github.com/sheheemmulakkal/clipboard-manager"
 
 
 [dependencies]
-x11rb = "0.13"
+x11rb = { version = "0.13", features = ["xtest"] }
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -18,11 +18,14 @@ toml = "0.8"
 chrono = "0.4"
 ksni = { version = "0.3", features = ["blocking"] }
 dirs = "5"
+ashpd = "0.9"
+tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
+futures-util = "0.3"
+evdev = "0.12"
 
 
 [dependencies.gtk4]
 version = "0.9"
-features = ["v4_12"]
 optional = true
 
 
@@ -36,6 +39,11 @@ version = "0.9"
 optional = true
 
 
+[dependencies.gdk4-x11]
+version = "0.9"
+optional = true
+
+
 [dependencies.rusqlite]
 version = "0.31"
 optional = true
@@ -44,7 +52,7 @@ features = ["bundled"]
 
 [features]
 default = ["ui"]
-ui = ["gtk4", "glib", "gdk4"]
+ui = ["gtk4", "glib", "gdk4", "gdk4-x11"]
 persist = ["rusqlite"]
 
 
@@ -57,16 +65,17 @@ strip = true          # strip debug symbols
 
 
 [package.metadata.deb]
-maintainer = "Your Name <you@example.com>"
-copyright = "2025, Your Name"
+maintainer = "sheheemmulakkal <sheheemmulakkal@users.noreply.github.com>"
+copyright = "2025, sheheemmulakkal"
 license-file = ["LICENSE", "0"]
 extended-description = """\
 Clipboard Manager runs silently in the background and captures your \
-clipboard history. Press Super+V at any time to see a popup list of \
+clipboard history. Press Ctrl+Alt+C at any time to see a popup list of \
 your recent clipboard items and paste any of them into the currently \
-focused window. Similar to the Windows Win+V experience.\
+focused window. Similar to the Windows Win+V experience. Requires an \
+X11 session (select Ubuntu on Xorg at login).\
 """
-depends = "$auto, xdotool, libgtk-4-1, libglib2.0-0"
+depends = "$auto, libgtk-4-1, libglib2.0-0"
 section = "utils"
 priority = "optional"
 assets = [

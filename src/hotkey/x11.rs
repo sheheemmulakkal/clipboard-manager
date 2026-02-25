@@ -37,7 +37,7 @@ impl X11HotkeyManager {
 // ── HotkeyManager impl ────────────────────────────────────────────────────────
 
 impl HotkeyManager for X11HotkeyManager {
-    fn start(&self, on_hotkey: impl Fn() + Send + Sync + 'static) -> Result<()> {
+    fn start(&self, on_hotkey: Box<dyn Fn() + Send + Sync + 'static>) -> Result<()> {
         let (conn, screen_num) =
             RustConnection::connect(None).map_err(|e| anyhow!("X11 connect: {}", e))?;
 

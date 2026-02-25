@@ -2,14 +2,21 @@
 
 All notable changes to Clipboard Manager will be documented here.
 
-## [Unreleased]
-
-## [0.1.0] - 2025-02-25
+## [1.0.0] - 2026-02-25
 ### Added
 - Clipboard history monitoring (captures all copied text)
-- Popup window triggered by Super+V global hotkey
+- Popup window triggered by Ctrl+Alt+C global hotkey
 - Click any history item to paste it at the cursor
+- Pin items to keep them at the top of the list
 - Deduplication — duplicate copies don't fill the list
-- Persists across sessions via XDG autostart
-- Configurable via ~/.config/clipboard-manager/config.toml
-- Uninstall with: sudo apt remove clipboard-manager
+- Configurable via `~/.config/clipboard-manager/config.toml`
+- System tray icon with quick access to popup and quit
+- Autostart on login via XDG autostart
+- Clear-with-undo support (configurable timeout)
+- Popup follows cursor position (configurable)
+
+### Requirements
+- Ubuntu 20.04 / 22.04 / 24.04 on X11 (select "Ubuntu on Xorg" at login)
+
+### Removed
+- Wayland support removed for stability — X11 session required

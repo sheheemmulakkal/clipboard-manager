@@ -5,9 +5,16 @@ use gtk4::{Button, GestureClick, Label, ListBoxRow, Orientation};
 
 use crate::clipboard::ClipboardEntry;
 
+// ── Unicode icons (no Nerd Font required) ─────────────────────────────────────
+const ICON_PIN_OFF: &str = "○";   // U+25CB  WHITE CIRCLE
+const ICON_PIN_ON:  &str = "●";   // U+25CF  BLACK CIRCLE
+const ICON_DELETE:  &str = "✕";   // U+2715  MULTIPLICATION X
+const ICON_COPY:    &str = "⎘";   // U+2398  HELM SYMBOL (copy)
+
 #[derive(Clone)]
 pub enum RowAction {
     Select,
+    Copy,
     Remove,
     TogglePin(bool), // new pinned state after toggle
 }
@@ -29,7 +36,7 @@ pub fn build_item_row(
 
     // ── Pin indicator ───────────────────────────────────────────────────
     if entry.pinned {
-        let pin_indicator = Label::new(Some("󰐃"));
+        let pin_indicator = Label::new(Some(ICON_PIN_ON));
         pin_indicator.add_css_class("pin-indicator");
         hbox.append(&pin_indicator);
     }
@@ -49,21 +56,30 @@ pub fn build_item_row(
     time_label.set_halign(gtk4::Align::End);
     time_label.set_valign(gtk4::Align::Center);
 
-    // ── Action buttons (pin + delete) ───────────────────────────────────
+    // ── Action buttons (copy + pin + delete) ────────────────────────────
     let btn_box = gtk4::Box::new(Orientation::Horizontal, 2);
     btn_box.add_css_class("row-actions");
 
-    let pin_label = if entry.pinned { "󰐄" } else { "󰐃" };
+    // Copy button — copies to clipboard without pasting
+    let copy_btn = Button::with_label(ICON_COPY);
+    copy_btn.add_css_class("row-btn");
+    copy_btn.add_css_class("copy-btn");
+    copy_btn.set_tooltip_text(Some("Copy only (no paste)"));
+
+    // Pin toggle button
+    let pin_label = if entry.pinned { ICON_PIN_ON } else { ICON_PIN_OFF };
     let pin_btn = Button::with_label(pin_label);
     pin_btn.add_css_class("row-btn");
     pin_btn.add_css_class(if entry.pinned { "pin-btn-active" } else { "pin-btn" });
     pin_btn.set_tooltip_text(Some(if entry.pinned { "Unpin" } else { "Pin" }));
 
-    let del_btn = Button::with_label("󰗨");
+    // Delete button
+    let del_btn = Button::with_label(ICON_DELETE);
     del_btn.add_css_class("row-btn");
     del_btn.add_css_class("del-btn");
     del_btn.set_tooltip_text(Some("Remove"));
 
+    btn_box.append(&copy_btn);
     btn_box.append(&pin_btn);
     btn_box.append(&del_btn);
 
@@ -78,13 +94,19 @@ pub fn build_item_row(
     let currently_pinned = entry.pinned;
     let content = entry.content.clone();
 
-    // Click on row body → Select
+    // Click on row body → Select (copy + paste)
     let cb_select = std::rc::Rc::clone(&on_action);
     let gesture = GestureClick::new();
     gesture.connect_released(move |_, _, _, _| {
         cb_select(RowAction::Select);
     });
     row.add_controller(gesture);
+
+    // Copy button → Copy only (no paste)
+    let cb_copy = std::rc::Rc::clone(&on_action);
+    copy_btn.connect_clicked(move |_| {
+        cb_copy(RowAction::Copy);
+    });
 
     // Pin button
     let cb_pin = std::rc::Rc::clone(&on_action);
@@ -98,7 +120,7 @@ pub fn build_item_row(
         cb_del(RowAction::Remove);
     });
 
-    // Store id/content as row data so popup can look them up
+    // Store id/content for keyboard handler in popup.rs
     unsafe {
         row.set_data("entry-id", id);
         row.set_data("entry-content", content);
