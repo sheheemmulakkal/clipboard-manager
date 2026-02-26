@@ -6,15 +6,17 @@ use gtk4::{Button, GestureClick, Label, ListBoxRow, Orientation};
 use crate::clipboard::ClipboardEntry;
 
 // ── Unicode icons (no Nerd Font required) ─────────────────────────────────────
-const ICON_PIN_OFF: &str = "○";   // U+25CB  WHITE CIRCLE
-const ICON_PIN_ON:  &str = "●";   // U+25CF  BLACK CIRCLE
-const ICON_DELETE:  &str = "✕";   // U+2715  MULTIPLICATION X
-const ICON_COPY:    &str = "⎘";   // U+2398  HELM SYMBOL (copy)
+const ICON_PIN_OFF:      &str = "○";   // U+25CB  WHITE CIRCLE
+const ICON_PIN_ON:       &str = "●";   // U+25CF  BLACK CIRCLE
+const ICON_DELETE:       &str = "✕";   // U+2715  MULTIPLICATION X
+const ICON_COPY:         &str = "⎘";   // U+2398  HELM SYMBOL (copy)
+const ICON_TERMINAL:     &str = "⌨";   // U+2328  KEYBOARD (terminal paste)
 
 #[derive(Clone)]
 pub enum RowAction {
     Select,
     Copy,
+    TerminalPaste,
     Remove,
     TogglePin(bool), // new pinned state after toggle
 }
@@ -56,7 +58,7 @@ pub fn build_item_row(
     time_label.set_halign(gtk4::Align::End);
     time_label.set_valign(gtk4::Align::Center);
 
-    // ── Action buttons (copy + pin + delete) ────────────────────────────
+    // ── Action buttons (copy + terminal-paste + pin + delete) ───────────
     let btn_box = gtk4::Box::new(Orientation::Horizontal, 2);
     btn_box.add_css_class("row-actions");
 
@@ -65,6 +67,12 @@ pub fn build_item_row(
     copy_btn.add_css_class("row-btn");
     copy_btn.add_css_class("copy-btn");
     copy_btn.set_tooltip_text(Some("Copy only (no paste)"));
+
+    // Terminal paste button — pastes via Ctrl+Shift+V
+    let term_btn = Button::with_label(ICON_TERMINAL);
+    term_btn.add_css_class("row-btn");
+    term_btn.add_css_class("term-btn");
+    term_btn.set_tooltip_text(Some("Paste to terminal (Ctrl+Shift+V)"));
 
     // Pin toggle button
     let pin_label = if entry.pinned { ICON_PIN_ON } else { ICON_PIN_OFF };
@@ -80,6 +88,7 @@ pub fn build_item_row(
     del_btn.set_tooltip_text(Some("Remove"));
 
     btn_box.append(&copy_btn);
+    btn_box.append(&term_btn);
     btn_box.append(&pin_btn);
     btn_box.append(&del_btn);
 
@@ -106,6 +115,12 @@ pub fn build_item_row(
     let cb_copy = std::rc::Rc::clone(&on_action);
     copy_btn.connect_clicked(move |_| {
         cb_copy(RowAction::Copy);
+    });
+
+    // Terminal paste button → paste via Ctrl+Shift+V
+    let cb_term = std::rc::Rc::clone(&on_action);
+    term_btn.connect_clicked(move |_| {
+        cb_term(RowAction::TerminalPaste);
     });
 
     // Pin button

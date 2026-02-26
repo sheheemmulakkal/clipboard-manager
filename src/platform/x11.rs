@@ -42,8 +42,14 @@ impl Platform for X11Platform {
 
     fn paste(&self, prev_window: Option<u64>) {
         // Called from a background std::thread — blocking is fine.
-        if let Err(e) = paste_xtest(prev_window) {
+        if let Err(e) = paste_xtest(prev_window, false) {
             eprintln!("[x11 paste] {e}");
+        }
+    }
+
+    fn paste_terminal(&self, prev_window: Option<u64>) {
+        if let Err(e) = paste_xtest(prev_window, true) {
+            eprintln!("[x11 paste_terminal] {e}");
         }
     }
 
@@ -103,7 +109,7 @@ pub fn screen_dimensions() -> Option<(i32, i32)> {
 
 // ── paste implementation ──────────────────────────────────────────────────────
 
-fn paste_xtest(prev_window: Option<u64>) -> Result<()> {
+fn paste_xtest(prev_window: Option<u64>, use_shift: bool) -> Result<()> {
     let (conn, sn) = RustConnection::connect(None)
         .map_err(|e| anyhow!("X11 connect: {e}"))?;
     let root = conn.setup().roots[sn].root;
@@ -114,15 +120,26 @@ fn paste_xtest(prev_window: Option<u64>) -> Result<()> {
         std::thread::sleep(Duration::from_millis(100));
     }
 
-    // Send Ctrl+V via XTest.
     let ctrl = find_keycode(&conn, 0xffe3).context("Control_L keycode not found")?;
     let v    = find_keycode(&conn, 0x0076).context("'v' keycode not found")?;
 
     use x11rb::protocol::xtest::ConnectionExt as _;
-    conn.xtest_fake_input(KEY_PRESS_EVENT,   ctrl, 0, root, 0, 0, 0)?.check()?;
-    conn.xtest_fake_input(KEY_PRESS_EVENT,   v,    0, root, 0, 0, 0)?.check()?;
-    conn.xtest_fake_input(KEY_RELEASE_EVENT, v,    0, root, 0, 0, 0)?.check()?;
-    conn.xtest_fake_input(KEY_RELEASE_EVENT, ctrl, 0, root, 0, 0, 0)?.check()?;
+    if use_shift {
+        // Send Ctrl+Shift+V via XTest (terminal paste).
+        let shift = find_keycode(&conn, 0xffe1).context("Shift_L keycode not found")?;
+        conn.xtest_fake_input(KEY_PRESS_EVENT,   ctrl,  0, root, 0, 0, 0)?.check()?;
+        conn.xtest_fake_input(KEY_PRESS_EVENT,   shift, 0, root, 0, 0, 0)?.check()?;
+        conn.xtest_fake_input(KEY_PRESS_EVENT,   v,     0, root, 0, 0, 0)?.check()?;
+        conn.xtest_fake_input(KEY_RELEASE_EVENT, v,     0, root, 0, 0, 0)?.check()?;
+        conn.xtest_fake_input(KEY_RELEASE_EVENT, shift, 0, root, 0, 0, 0)?.check()?;
+        conn.xtest_fake_input(KEY_RELEASE_EVENT, ctrl,  0, root, 0, 0, 0)?.check()?;
+    } else {
+        // Send Ctrl+V via XTest.
+        conn.xtest_fake_input(KEY_PRESS_EVENT,   ctrl, 0, root, 0, 0, 0)?.check()?;
+        conn.xtest_fake_input(KEY_PRESS_EVENT,   v,    0, root, 0, 0, 0)?.check()?;
+        conn.xtest_fake_input(KEY_RELEASE_EVENT, v,    0, root, 0, 0, 0)?.check()?;
+        conn.xtest_fake_input(KEY_RELEASE_EVENT, ctrl, 0, root, 0, 0, 0)?.check()?;
+    }
     conn.flush().map_err(|e| anyhow!("flush: {e}"))?;
 
     Ok(())

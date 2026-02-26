@@ -23,6 +23,16 @@ pub trait Platform: Send + Sync {
     /// Called from a dedicated `std::thread::spawn` thread in app.rs; may block.
     fn paste(&self, prev_window: Option<u64>);
 
+    /// Paste clipboard contents using the terminal paste shortcut (Ctrl+Shift+V).
+    ///
+    /// Terminals intercept Ctrl+V for literal characters; Ctrl+Shift+V is the
+    /// standard paste shortcut in most terminal emulators.
+    ///
+    /// Defaults to calling `paste()` as a fallback.
+    fn paste_terminal(&self, prev_window: Option<u64>) {
+        self.paste(prev_window);
+    }
+
     /// Return the cursor's current screen coordinates.
     /// Returns `None` on Wayland (compositor controls window placement).
     fn cursor_position(&self) -> Option<(i32, i32)>;

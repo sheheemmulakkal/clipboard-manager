@@ -23,19 +23,20 @@ struct UndoPending {
 // ── Public struct ─────────────────────────────────────────────────────────────
 
 pub struct ClipboardPopup {
-    window:       Window,
-    list_box:     ListBox,
-    row_data:     Rc<RefCell<Vec<(u64, String, bool)>>>,
-    on_select:    Rc<RefCell<Option<Rc<dyn Fn(u64, String)>>>>,
-    on_copy:      Rc<RefCell<Option<Rc<dyn Fn(u64, String)>>>>,
-    on_remove:    Rc<RefCell<Option<Rc<dyn Fn(u64)>>>>,
-    on_pin:       Rc<RefCell<Option<Rc<dyn Fn(u64, bool)>>>>,
-    on_clear:     Rc<RefCell<Option<Rc<dyn Fn()>>>>,
-    undo_bar:     gtk4::Box,
-    undo_label:   Label,
-    undo_pending: Rc<RefCell<Option<UndoPending>>>,
-    undo_tick:    Rc<RefCell<Option<glib::SourceId>>>,
-    platform:     Arc<dyn Platform>,
+    window:              Window,
+    list_box:            ListBox,
+    row_data:            Rc<RefCell<Vec<(u64, String, bool)>>>,
+    on_select:           Rc<RefCell<Option<Rc<dyn Fn(u64, String)>>>>,
+    on_copy:             Rc<RefCell<Option<Rc<dyn Fn(u64, String)>>>>,
+    on_terminal_paste:   Rc<RefCell<Option<Rc<dyn Fn(u64, String)>>>>,
+    on_remove:           Rc<RefCell<Option<Rc<dyn Fn(u64)>>>>,
+    on_pin:              Rc<RefCell<Option<Rc<dyn Fn(u64, bool)>>>>,
+    on_clear:            Rc<RefCell<Option<Rc<dyn Fn()>>>>,
+    undo_bar:            gtk4::Box,
+    undo_label:          Label,
+    undo_pending:        Rc<RefCell<Option<UndoPending>>>,
+    undo_tick:           Rc<RefCell<Option<glib::SourceId>>>,
+    platform:            Arc<dyn Platform>,
 }
 
 impl ClipboardPopup {
@@ -108,14 +109,15 @@ impl ClipboardPopup {
         window.set_child(Some(&vbox));
 
         // ── Shared state ──────────────────────────────────────────────────────
-        let row_data:     Rc<RefCell<Vec<(u64, String, bool)>>>         = Rc::new(RefCell::new(vec![]));
-        let on_select:    Rc<RefCell<Option<Rc<dyn Fn(u64, String)>>>> = Rc::new(RefCell::new(None));
-        let on_copy:      Rc<RefCell<Option<Rc<dyn Fn(u64, String)>>>> = Rc::new(RefCell::new(None));
-        let on_remove:    Rc<RefCell<Option<Rc<dyn Fn(u64)>>>>         = Rc::new(RefCell::new(None));
-        let on_pin:       Rc<RefCell<Option<Rc<dyn Fn(u64, bool)>>>>   = Rc::new(RefCell::new(None));
-        let on_clear:     Rc<RefCell<Option<Rc<dyn Fn()>>>>            = Rc::new(RefCell::new(None));
-        let undo_pending: Rc<RefCell<Option<UndoPending>>>             = Rc::new(RefCell::new(None));
-        let undo_tick:    Rc<RefCell<Option<glib::SourceId>>>          = Rc::new(RefCell::new(None));
+        let row_data:           Rc<RefCell<Vec<(u64, String, bool)>>>         = Rc::new(RefCell::new(vec![]));
+        let on_select:          Rc<RefCell<Option<Rc<dyn Fn(u64, String)>>>> = Rc::new(RefCell::new(None));
+        let on_copy:            Rc<RefCell<Option<Rc<dyn Fn(u64, String)>>>> = Rc::new(RefCell::new(None));
+        let on_terminal_paste:  Rc<RefCell<Option<Rc<dyn Fn(u64, String)>>>> = Rc::new(RefCell::new(None));
+        let on_remove:          Rc<RefCell<Option<Rc<dyn Fn(u64)>>>>         = Rc::new(RefCell::new(None));
+        let on_pin:             Rc<RefCell<Option<Rc<dyn Fn(u64, bool)>>>>   = Rc::new(RefCell::new(None));
+        let on_clear:           Rc<RefCell<Option<Rc<dyn Fn()>>>>            = Rc::new(RefCell::new(None));
+        let undo_pending:       Rc<RefCell<Option<UndoPending>>>             = Rc::new(RefCell::new(None));
+        let undo_tick:          Rc<RefCell<Option<glib::SourceId>>>          = Rc::new(RefCell::new(None));
 
         // ── Drag tracking ─────────────────────────────────────────────────────
         //
@@ -307,7 +309,7 @@ impl ClipboardPopup {
 
         Self {
             window, list_box, row_data,
-            on_select, on_copy, on_remove, on_pin, on_clear,
+            on_select, on_copy, on_terminal_paste, on_remove, on_pin, on_clear,
             undo_bar, undo_label, undo_pending, undo_tick,
             platform,
         }
@@ -317,12 +319,13 @@ impl ClipboardPopup {
 
     pub fn populate(
         &self,
-        entries:   &[ClipboardEntry],
-        on_select: impl Fn(u64, String) + 'static,
-        on_copy:   impl Fn(u64, String) + 'static,
-        on_remove: impl Fn(u64)         + 'static,
-        on_pin:    impl Fn(u64, bool)   + 'static,
-        on_clear:  impl Fn()            + 'static,
+        entries:            &[ClipboardEntry],
+        on_select:          impl Fn(u64, String) + 'static,
+        on_copy:            impl Fn(u64, String) + 'static,
+        on_terminal_paste:  impl Fn(u64, String) + 'static,
+        on_remove:          impl Fn(u64)         + 'static,
+        on_pin:             impl Fn(u64, bool)   + 'static,
+        on_clear:           impl Fn()            + 'static,
     ) {
         cancel_tick(&self.undo_tick);
         *self.undo_pending.borrow_mut() = None;
@@ -332,17 +335,19 @@ impl ClipboardPopup {
             self.list_box.remove(&child);
         }
 
-        let on_select: Rc<dyn Fn(u64, String)> = Rc::new(on_select);
-        let on_copy:   Rc<dyn Fn(u64, String)> = Rc::new(on_copy);
-        let on_remove: Rc<dyn Fn(u64)>         = Rc::new(on_remove);
-        let on_pin:    Rc<dyn Fn(u64, bool)>   = Rc::new(on_pin);
-        let on_clear:  Rc<dyn Fn()>            = Rc::new(on_clear);
+        let on_select:         Rc<dyn Fn(u64, String)> = Rc::new(on_select);
+        let on_copy:           Rc<dyn Fn(u64, String)> = Rc::new(on_copy);
+        let on_terminal_paste: Rc<dyn Fn(u64, String)> = Rc::new(on_terminal_paste);
+        let on_remove:         Rc<dyn Fn(u64)>         = Rc::new(on_remove);
+        let on_pin:            Rc<dyn Fn(u64, bool)>   = Rc::new(on_pin);
+        let on_clear:          Rc<dyn Fn()>            = Rc::new(on_clear);
 
-        *self.on_select.borrow_mut() = Some(Rc::clone(&on_select));
-        *self.on_copy.borrow_mut()   = Some(Rc::clone(&on_copy));
-        *self.on_remove.borrow_mut() = Some(Rc::clone(&on_remove));
-        *self.on_pin.borrow_mut()    = Some(Rc::clone(&on_pin));
-        *self.on_clear.borrow_mut()  = Some(Rc::clone(&on_clear));
+        *self.on_select.borrow_mut()         = Some(Rc::clone(&on_select));
+        *self.on_copy.borrow_mut()           = Some(Rc::clone(&on_copy));
+        *self.on_terminal_paste.borrow_mut() = Some(Rc::clone(&on_terminal_paste));
+        *self.on_remove.borrow_mut()         = Some(Rc::clone(&on_remove));
+        *self.on_pin.borrow_mut()            = Some(Rc::clone(&on_pin));
+        *self.on_clear.borrow_mut()          = Some(Rc::clone(&on_clear));
 
         let mut data = self.row_data.borrow_mut();
         data.clear();
@@ -354,12 +359,14 @@ impl ClipboardPopup {
             let content = entry.content.clone();
             let cb_sel  = Rc::clone(&on_select);
             let cb_cpy  = Rc::clone(&on_copy);
+            let cb_tp   = Rc::clone(&on_terminal_paste);
             let cb_rm   = Rc::clone(&on_remove);
             let cb_pin  = Rc::clone(&on_pin);
 
             let row = build_item_row(entry, move |action| match action {
                 RowAction::Select            => cb_sel(id, content.clone()),
                 RowAction::Copy              => cb_cpy(id, content.clone()),
+                RowAction::TerminalPaste     => cb_tp(id, content.clone()),
                 RowAction::Remove            => cb_rm(id),
                 RowAction::TogglePin(pinned) => cb_pin(id, pinned),
             });

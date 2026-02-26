@@ -196,8 +196,13 @@ impl App {
                         let repop_clr  = Rc::clone(&repop_r);
                         let popup_clr  = Rc::clone(&popup_r);
 
-                        // Platform clone for paste in on_select.
+                        // Platform clones for paste callbacks.
                         let platform_sel = Arc::clone(&platform_inner);
+                        let platform_tp  = Arc::clone(&platform_inner);
+
+                        let cell_tp  = Rc::clone(&cell_r);
+                        let popup_tp = Rc::clone(&popup_r);
+                        let store_tp = Rc::clone(&store_r);
 
                         popup_r.populate(
                             &entries,
@@ -233,6 +238,28 @@ impl App {
                                     display.clipboard().set_text(&content);
                                 }
                                 eprintln!("[copy] copied to clipboard (no paste)");
+                            },
+                            // ── on_terminal_paste: copy + hide + Ctrl+Shift+V
+                            move |_id, content| {
+                                if let Some(display) = gdk4::Display::default() {
+                                    display.clipboard().set_text(&content);
+                                }
+                                popup_tp.hide();
+
+                                let prev_id    = cell_tp.get();
+                                let plat_paste = Arc::clone(&platform_tp);
+                                eprintln!("[terminal_paste] prev_id={prev_id:?}");
+
+                                glib::timeout_add_local_once(
+                                    std::time::Duration::from_millis(200),
+                                    move || {
+                                        std::thread::spawn(move || {
+                                            plat_paste.paste_terminal(prev_id);
+                                        });
+                                    },
+                                );
+
+                                let _ = &store_tp;
                             },
                             // ── on_remove ─────────────────────────────────
                             move |id| {

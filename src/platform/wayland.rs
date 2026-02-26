@@ -16,13 +16,13 @@ use super::Platform;
 pub struct WaylandPlatform {
     #[allow(dead_code)] // keeps the runtime alive for the paste daemon task
     rt:       Runtime,
-    paste_tx: mpsc::Sender<oneshot::Sender<()>>,
+    paste_tx: mpsc::Sender<(bool, oneshot::Sender<()>)>,
 }
 
 impl WaylandPlatform {
     pub fn new() -> Self {
         let rt = Runtime::new().expect("tokio Runtime");
-        let (paste_tx, paste_rx) = mpsc::channel::<oneshot::Sender<()>>(4);
+        let (paste_tx, paste_rx) = mpsc::channel::<(bool, oneshot::Sender<()>)>(4);
         rt.spawn(paste_session_daemon(paste_rx));
         Self { rt, paste_tx }
     }
@@ -45,11 +45,20 @@ impl Platform for WaylandPlatform {
     /// are safe here.
     fn paste(&self, _prev_window: Option<u64>) {
         let (done_tx, done_rx) = oneshot::channel::<()>();
-        if self.paste_tx.blocking_send(done_tx).is_err() {
+        if self.paste_tx.blocking_send((false, done_tx)).is_err() {
             eprintln!("[wayland paste] paste daemon unavailable");
             return;
         }
         // Wait for the daemon to confirm the keystrokes were sent.
+        let _ = done_rx.blocking_recv();
+    }
+
+    fn paste_terminal(&self, _prev_window: Option<u64>) {
+        let (done_tx, done_rx) = oneshot::channel::<()>();
+        if self.paste_tx.blocking_send((true, done_tx)).is_err() {
+            eprintln!("[wayland paste_terminal] paste daemon unavailable");
+            return;
+        }
         let _ = done_rx.blocking_recv();
     }
 
@@ -80,15 +89,15 @@ impl Platform for WaylandPlatform {
 // If the session fails to initialize, paste requests are silently completed
 // (the paste is a no-op but the app keeps running).
 
-async fn paste_session_daemon(mut rx: mpsc::Receiver<oneshot::Sender<()>>) {
+async fn paste_session_daemon(mut rx: mpsc::Receiver<(bool, oneshot::Sender<()>)>) {
     use ashpd::desktop::remote_desktop::{DeviceType, RemoteDesktop};
     use ashpd::desktop::PersistMode;
     use ashpd::WindowIdentifier;
 
     // ── Wait for the first paste request ────────────────────────────────────
-    let first_done = match rx.recv().await {
-        Some(tx) => tx,
-        None     => return,
+    let (first_shift, first_done) = match rx.recv().await {
+        Some((shift, tx)) => (shift, tx),
+        None              => return,
     };
 
     // ── Create the session (shows dialog on first run) ───────────────────────
@@ -138,11 +147,19 @@ async fn paste_session_daemon(mut rx: mpsc::Receiver<oneshot::Sender<()>>) {
     eprintln!("[wayland paste] RemoteDesktop session ready — subsequent pastes need no dialog");
 
     // ── Serve the first paste, then all subsequent ones ──────────────────────
-    send_ctrl_v(&proxy, &session).await;
+    if first_shift {
+        send_ctrl_shift_v(&proxy, &session).await;
+    } else {
+        send_ctrl_v(&proxy, &session).await;
+    }
     let _ = first_done.send(());
 
-    while let Some(done_tx) = rx.recv().await {
-        send_ctrl_v(&proxy, &session).await;
+    while let Some((use_shift, done_tx)) = rx.recv().await {
+        if use_shift {
+            send_ctrl_shift_v(&proxy, &session).await;
+        } else {
+            send_ctrl_v(&proxy, &session).await;
+        }
         let _ = done_tx.send(());
     }
 }
@@ -160,9 +177,24 @@ async fn send_ctrl_v<'a>(
     let _ = proxy.notify_keyboard_keysym(session, 0xffe3, KeyState::Released).await;
 }
 
+/// Send Ctrl+Shift+V via the open RemoteDesktop session (terminal paste).
+async fn send_ctrl_shift_v<'a>(
+    proxy:   &ashpd::desktop::remote_desktop::RemoteDesktop<'a>,
+    session: &ashpd::desktop::Session<'a, ashpd::desktop::remote_desktop::RemoteDesktop<'a>>,
+) {
+    use ashpd::desktop::remote_desktop::KeyState;
+    // Control_L = 0xffe3, Shift_L = 0xffe1, 'v' = 0x76
+    let _ = proxy.notify_keyboard_keysym(session, 0xffe3, KeyState::Pressed).await;
+    let _ = proxy.notify_keyboard_keysym(session, 0xffe1, KeyState::Pressed).await;
+    let _ = proxy.notify_keyboard_keysym(session, 0x0076, KeyState::Pressed).await;
+    let _ = proxy.notify_keyboard_keysym(session, 0x0076, KeyState::Released).await;
+    let _ = proxy.notify_keyboard_keysym(session, 0xffe1, KeyState::Released).await;
+    let _ = proxy.notify_keyboard_keysym(session, 0xffe3, KeyState::Released).await;
+}
+
 /// Drain remaining paste requests after a fatal error (so callers unblock).
-async fn drain(mut rx: mpsc::Receiver<oneshot::Sender<()>>) {
-    while let Some(tx) = rx.recv().await {
+async fn drain(mut rx: mpsc::Receiver<(bool, oneshot::Sender<()>)>) {
+    while let Some((_, tx)) = rx.recv().await {
         let _ = tx.send(());
     }
 }
