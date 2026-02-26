@@ -2,13 +2,14 @@
 set -e
 
 # Kill running instances.
-# Match the full binary path so we don't accidentally kill the package manager
-# (pkill -f "clipboard-manager" would also match "apt remove clipboard-manager").
-# The installed binary is always /usr/bin/clipboard-manager.
+# Anchor to the start of the cmdline so we never match "apt remove clipboard-manager".
+# The pattern covers both launch forms:
+#   clipboard-manager          (launched by name via PATH — most common)
+#   /usr/bin/clipboard-manager (launched with full path)
 # Send SIGTERM first, wait briefly, then SIGKILL if still alive.
-if pkill -f '/usr/bin/clipboard-manager' 2>/dev/null; then
+if pkill -TERM -f '^(/usr/bin/)?clipboard-manager( |$)' 2>/dev/null; then
     sleep 0.5
-    pkill -f -KILL '/usr/bin/clipboard-manager' 2>/dev/null || true
+    pkill -KILL -f '^(/usr/bin/)?clipboard-manager( |$)' 2>/dev/null || true
 fi
 
 echo ""
