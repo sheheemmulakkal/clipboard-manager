@@ -53,7 +53,7 @@ impl ClipboardMonitor {
                                 *last_text.borrow_mut() = text.clone();
 
                                 let preview: String = text.chars().take(60).collect();
-                                eprintln!("[monitor] captured: {:?}", preview);
+                                tracing::debug!("[monitor] captured: {:?}", preview);
                                 let next_id = store.borrow().len() as u64 + 1;
                                 let entry = ClipboardEntry::new(next_id, text);
                                 store.borrow_mut().add(entry);

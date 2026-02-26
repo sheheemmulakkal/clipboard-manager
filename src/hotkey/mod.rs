@@ -26,10 +26,10 @@ pub trait HotkeyManager: 'static {
 /// * X11 → `X11HotkeyManager` (XGrabKey via x11rb)
 pub fn detect(hotkey: &str) -> Box<dyn HotkeyManager> {
     if std::env::var("WAYLAND_DISPLAY").is_ok() {
-        eprintln!("[hotkey] Wayland session — using GlobalShortcuts backend");
+        tracing::info!("hotkey: Wayland session — using GlobalShortcuts backend");
         Box::new(WaylandHotkeyManager::new(hotkey))
     } else {
-        eprintln!("[hotkey] X11 session — using X11 backend");
+        tracing::info!("hotkey: X11 session — using X11 backend");
         Box::new(X11HotkeyManager::new(hotkey))
     }
 }

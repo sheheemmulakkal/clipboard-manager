@@ -53,7 +53,7 @@ impl HotkeyManager for X11HotkeyManager {
             .map_err(|e| anyhow!("{}", e))?;
 
         let (modifiers, keycode) = parse_hotkey(&self.hotkey, first_kc, &km)?;
-        eprintln!("[hotkey] grabbing '{}' → modifiers=0x{:02x} keycode={}", self.hotkey, modifiers, keycode);
+        tracing::debug!("hotkey: grabbing '{}' modifiers=0x{:02x} keycode={}", self.hotkey, modifiers, keycode);
 
         // Grab with NumLock / CapsLock permutations so the hotkey fires
         // regardless of those lock-key states.
@@ -67,14 +67,14 @@ impl HotkeyManager for X11HotkeyManager {
             match conn.grab_key(false, root, mods, keycode, GrabMode::ASYNC, GrabMode::ASYNC) {
                 Ok(cookie) => {
                     if let Err(e) = cookie.check() {
-                        eprintln!("[hotkey] grab_key rejected for mods=0x{:x}: {}", u16::from(mods), e);
+                        tracing::warn!("hotkey: grab_key rejected for mods=0x{:x}: {}", u16::from(mods), e);
                     }
                 }
-                Err(e) => eprintln!("[hotkey] grab_key send error for mods=0x{:x}: {}", u16::from(mods), e),
+                Err(e) => tracing::warn!("hotkey: grab_key send error for mods=0x{:x}: {}", u16::from(mods), e),
             }
         }
         conn.flush().map_err(|e| anyhow!("{}", e))?;
-        eprintln!("[hotkey] grab registered, listening for KeyPress events");
+        tracing::info!("hotkey: grab registered for '{}'", self.hotkey);
 
         let stop       = Arc::new(AtomicBool::new(false));
         let stop_clone = Arc::clone(&stop);
@@ -91,7 +91,7 @@ impl HotkeyManager for X11HotkeyManager {
                 }
                 match conn.poll_for_event() {
                     Ok(Some(x11rb::protocol::Event::KeyPress(_))) => {
-                        eprintln!("[hotkey] KeyPress received");
+                        tracing::debug!("hotkey: KeyPress received");
                         on_hotkey();
                     }
                     Ok(None) => {

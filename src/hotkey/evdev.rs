@@ -17,19 +17,19 @@ pub fn start(hotkey: &str, cb: Arc<dyn Fn() + Send + Sync + 'static>) -> bool {
     let parsed = match parse_hotkey(hotkey) {
         Some(p) => p,
         None => {
-            eprintln!("[hotkey/evdev] Cannot parse hotkey string: '{hotkey}'");
+            tracing::warn!("hotkey/evdev: cannot parse hotkey string: '{hotkey}'");
             return false;
         }
     };
 
     let keyboards = find_keyboards();
     if keyboards.is_empty() {
-        eprintln!("[hotkey/evdev] No readable keyboard devices found (not in 'input' group).");
+        tracing::warn!("hotkey/evdev: no readable keyboard devices (not in 'input' group)");
         return false;
     }
 
-    eprintln!(
-        "[hotkey/evdev] Listening on {} keyboard device(s) for hotkey '{hotkey}'",
+    tracing::info!(
+        "hotkey/evdev: listening on {} keyboard device(s) for '{hotkey}'",
         keyboards.len(),
     );
 
@@ -62,7 +62,7 @@ pub fn start(hotkey: &str, cb: Arc<dyn Fn() + Send + Sync + 'static>) -> bool {
                             continue;
                         }
                         Err(e) => {
-                            eprintln!("[hotkey/evdev] device read error: {e}");
+                            tracing::warn!("hotkey/evdev: device read error: {e}");
                             break;
                         }
                     };

@@ -43,13 +43,13 @@ impl Platform for X11Platform {
     fn paste(&self, prev_window: Option<u64>) {
         // Called from a background std::thread — blocking is fine.
         if let Err(e) = paste_xtest(prev_window, false) {
-            eprintln!("[x11 paste] {e}");
+            tracing::warn!("x11 paste: {e}");
         }
     }
 
     fn paste_terminal(&self, prev_window: Option<u64>) {
         if let Err(e) = paste_xtest(prev_window, true) {
-            eprintln!("[x11 paste_terminal] {e}");
+            tracing::warn!("x11 paste_terminal: {e}");
         }
     }
 

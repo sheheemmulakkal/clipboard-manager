@@ -46,7 +46,7 @@ impl Platform for WaylandPlatform {
     fn paste(&self, _prev_window: Option<u64>) {
         let (done_tx, done_rx) = oneshot::channel::<()>();
         if self.paste_tx.blocking_send((false, done_tx)).is_err() {
-            eprintln!("[wayland paste] paste daemon unavailable");
+            tracing::warn!("wayland paste: daemon unavailable");
             return;
         }
         // Wait for the daemon to confirm the keystrokes were sent.
@@ -56,7 +56,7 @@ impl Platform for WaylandPlatform {
     fn paste_terminal(&self, _prev_window: Option<u64>) {
         let (done_tx, done_rx) = oneshot::channel::<()>();
         if self.paste_tx.blocking_send((true, done_tx)).is_err() {
-            eprintln!("[wayland paste_terminal] paste daemon unavailable");
+            tracing::warn!("wayland paste_terminal: daemon unavailable");
             return;
         }
         let _ = done_rx.blocking_recv();
@@ -104,7 +104,7 @@ async fn paste_session_daemon(mut rx: mpsc::Receiver<(bool, oneshot::Sender<()>)
     let proxy = match RemoteDesktop::new().await {
         Ok(p)  => p,
         Err(e) => {
-            eprintln!("[wayland paste] failed to connect to RemoteDesktop portal: {e}");
+            tracing::warn!("wayland paste: failed to connect to RemoteDesktop portal: {e}");
             let _ = first_done.send(());
             drain(rx).await;
             return;
@@ -114,7 +114,7 @@ async fn paste_session_daemon(mut rx: mpsc::Receiver<(bool, oneshot::Sender<()>)
     let session = match proxy.create_session().await {
         Ok(s)  => s,
         Err(e) => {
-            eprintln!("[wayland paste] create_session failed: {e}");
+            tracing::warn!("wayland paste: create_session failed: {e}");
             let _ = first_done.send(());
             drain(rx).await;
             return;
@@ -130,7 +130,7 @@ async fn paste_session_daemon(mut rx: mpsc::Receiver<(bool, oneshot::Sender<()>)
         )
         .await
     {
-        eprintln!("[wayland paste] select_devices failed: {e}");
+        tracing::warn!("wayland paste: select_devices failed: {e}");
         let _ = first_done.send(());
         drain(rx).await;
         return;
@@ -138,13 +138,13 @@ async fn paste_session_daemon(mut rx: mpsc::Receiver<(bool, oneshot::Sender<()>)
 
     // `start()` triggers the one-time GNOME permission dialog.
     if let Err(e) = proxy.start(&session, &WindowIdentifier::default()).await {
-        eprintln!("[wayland paste] start failed: {e}");
+        tracing::warn!("wayland paste: start failed: {e}");
         let _ = first_done.send(());
         drain(rx).await;
         return;
     }
 
-    eprintln!("[wayland paste] RemoteDesktop session ready — subsequent pastes need no dialog");
+    tracing::info!("wayland paste: RemoteDesktop session ready");
 
     // ── Serve the first paste, then all subsequent ones ──────────────────────
     if first_shift {

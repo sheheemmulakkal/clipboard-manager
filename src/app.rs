@@ -28,7 +28,7 @@ impl App {
         let config = AppConfig::load()?;
 
         if let Err(e) = Self::autostart_if_needed() {
-            eprintln!("[autostart] warning: {e}");
+            tracing::warn!("[autostart] {e}");
         }
 
         let store: Box<dyn Store> =
@@ -53,13 +53,18 @@ impl App {
                 exe.display()
             );
             std::fs::write(&dest, content)?;
-            eprintln!("[autostart] installed to {}", dest.display());
+            tracing::debug!("[autostart] installed to {}", dest.display());
         }
         Ok(())
     }
 
     pub fn run(&self) -> Result<()> {
-        tracing_subscriber::fmt::init();
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+            )
+            .init();
 
         let app = Application::builder()
             .application_id("com.example.clipboard-manager")
@@ -115,7 +120,7 @@ impl App {
                 AppConfig::default(),
                 move || {
                     let count = store_for_cb.borrow().len();
-                    eprintln!("[monitor] store now has {} item(s)", count);
+                    tracing::debug!("[monitor] store now has {} item(s)", count);
                 },
             );
 
@@ -139,7 +144,7 @@ impl App {
                 // X11: queries _NET_ACTIVE_WINDOW via x11rb.
                 // Wayland: returns None (compositor doesn't expose this).
                 let prev = platform_hk.capture_active_window();
-                eprintln!("[hotkey] captured prev_window={prev:?}");
+                tracing::debug!("[hotkey] captured prev_window={prev:?}");
                 let _ = hotkey_tx.try_send(prev);
             })) {
                 Ok(()) => tracing::info!(
@@ -218,7 +223,7 @@ impl App {
 
                                 let prev_id    = cell_sel.get();
                                 let plat_paste = Arc::clone(&platform_sel);
-                                eprintln!("[select] prev_id={prev_id:?}");
+                                tracing::debug!("[select] prev_id={prev_id:?}");
 
                                 // Delay so the popup fully hides and the
                                 // previous window regains focus before paste.
@@ -240,7 +245,7 @@ impl App {
                                 if let Some(display) = gdk4::Display::default() {
                                     display.clipboard().set_text(&content);
                                 }
-                                eprintln!("[copy] copied to clipboard (no paste)");
+                                tracing::debug!("[copy] copied to clipboard (no paste)");
                             },
                             // ── on_terminal_paste: copy + hide + Ctrl+Shift+V
                             move |_id, content| {
@@ -251,7 +256,7 @@ impl App {
 
                                 let prev_id    = cell_tp.get();
                                 let plat_paste = Arc::clone(&platform_tp);
-                                eprintln!("[terminal_paste] prev_id={prev_id:?}");
+                                tracing::debug!("[terminal_paste] prev_id={prev_id:?}");
 
                                 glib::timeout_add_local_once(
                                     std::time::Duration::from_millis(200),
@@ -267,13 +272,13 @@ impl App {
                             // ── on_remove ─────────────────────────────────
                             move |id| {
                                 store_rm.borrow_mut().remove(id);
-                                eprintln!("[remove] id={id}");
+                                tracing::debug!("[remove] id={id}");
                                 if let Some(f) = repop_rm.borrow().as_ref() { f(); }
                             },
                             // ── on_pin ────────────────────────────────────
                             move |id, pinned| {
                                 store_pin.borrow_mut().set_pinned(id, pinned);
-                                eprintln!("[pin] id={id} pinned={pinned}");
+                                tracing::debug!("[pin] id={id} pinned={pinned}");
                                 if let Some(f) = repop_pin.borrow().as_ref() { f(); }
                             },
                             // ── on_clear ──────────────────────────────────
@@ -289,7 +294,7 @@ impl App {
                                     .count();
 
                                 if count == 0 { return; }
-                                eprintln!("[clear] pending undo for {count} item(s)");
+                                tracing::debug!("[clear] pending undo for {count} item(s)");
 
                                 let store_commit = Rc::clone(&store_clr);
                                 let repop_commit = Rc::clone(&repop_clr);
@@ -300,13 +305,13 @@ impl App {
                                     clear_undo_timeout_secs,
                                     // on_undo: store untouched → just repopulate
                                     move || {
-                                        eprintln!("[clear] undone");
+                                        tracing::debug!("[clear] undone");
                                         if let Some(f) = repop_undo.borrow().as_ref() { f(); }
                                     },
                                     // on_commit: now actually clear + repopulate
                                     move || {
                                         store_commit.borrow_mut().clear_unpinned();
-                                        eprintln!("[clear] committed");
+                                        tracing::debug!("[clear] committed");
                                         if let Some(f) = repop_commit.borrow().as_ref() { f(); }
                                     },
                                 );

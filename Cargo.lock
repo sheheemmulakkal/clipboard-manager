@@ -349,7 +349,7 @@ dependencies = [
 
 [[package]]
 name = "clipboard-manager"
-version = "1.0.0"
+version = "1.0.4"
 dependencies = [
  "anyhow",
  "ashpd",

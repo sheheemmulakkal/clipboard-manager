@@ -61,10 +61,10 @@ pub trait Platform: Send + Sync {
 /// * Otherwise            → `X11Platform`        (paste via XTest, cursor via x11rb)
 pub fn detect() -> std::sync::Arc<dyn Platform> {
     if std::env::var("WAYLAND_DISPLAY").is_ok() {
-        eprintln!("[platform] Wayland session — using Wayland backend");
+        tracing::info!("platform: Wayland session — using Wayland backend");
         std::sync::Arc::new(WaylandPlatform::new())
     } else {
-        eprintln!("[platform] X11 session — using X11 backend");
+        tracing::info!("platform: X11 session — using X11 backend");
         std::sync::Arc::new(X11Platform)
     }
 }

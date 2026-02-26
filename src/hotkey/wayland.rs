@@ -38,7 +38,7 @@ impl HotkeyManager for WaylandHotkeyManager {
                 let rt = match Runtime::new() {
                     Ok(r)  => r,
                     Err(e) => {
-                        eprintln!("[hotkey/wayland] Failed to create tokio runtime: {e}");
+                        tracing::warn!("hotkey/wayland: failed to create tokio runtime: {e}");
                         return;
                     }
                 };
@@ -47,8 +47,8 @@ impl HotkeyManager for WaylandHotkeyManager {
                     match run_global_shortcuts_portal(&hotkey, Arc::clone(&cb)).await {
                         Ok(()) => {}
                         Err(e) => {
-                            eprintln!("[hotkey/wayland] GlobalShortcuts portal unavailable: {e}");
-                            eprintln!("[hotkey/wayland] Trying evdev keyboard listener...");
+                            tracing::warn!("hotkey/wayland: GlobalShortcuts portal unavailable: {e}");
+                            tracing::info!("hotkey/wayland: trying evdev keyboard listener...");
                             if !crate::hotkey::evdev::start(&hotkey, cb) {
                                 // evdev failed too (no `input` group) — auto-configure a
                                 // GNOME custom keyboard shortcut that sends SIGUSR1.
@@ -88,8 +88,8 @@ async fn run_global_shortcuts_portal(
 
     proxy.bind_shortcuts(&session, &[shortcut], &ashpd::WindowIdentifier::default()).await?;
 
-    eprintln!(
-        "[hotkey/wayland] Registered via GlobalShortcuts portal ({})",
+    tracing::info!(
+        "hotkey/wayland: registered via GlobalShortcuts portal ({})",
         preferred.as_deref().unwrap_or("<no preferred trigger>"),
     );
 
@@ -149,18 +149,15 @@ fn setup_gnome_shortcut(hotkey: &str) {
           && gsettings(&["set", &schema, "binding", &binding]);
 
     if !ok {
-        eprintln!("[hotkey/wayland] gsettings unavailable — hotkey could not be configured.");
-        eprintln!("[hotkey/wayland] On other DEs, add a custom shortcut that runs:");
-        eprintln!("[hotkey/wayland]   pkill -USR1 clipboard-manager");
-        eprintln!("[hotkey/wayland] The popup can still be opened via the system tray icon.");
+        eprintln!("clipboard-manager: hotkey could not be configured (gsettings unavailable).");
+        eprintln!("  On other DEs, add a custom shortcut that runs:");
+        eprintln!("    pkill -USR1 clipboard-manager");
         return;
     }
 
     add_to_keybindings_list(path);
 
-    eprintln!("[hotkey/wayland] ✓ GNOME keyboard shortcut registered: {binding}");
-    eprintln!("[hotkey/wayland]   Command: {exe}");
-    eprintln!("[hotkey/wayland]   Press the shortcut to open the clipboard popup.");
+    tracing::info!("hotkey/wayland: GNOME keyboard shortcut registered: {binding} → {exe}");
 }
 
 /// Run `gsettings <args>` and return true on success.

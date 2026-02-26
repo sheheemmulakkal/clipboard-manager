@@ -108,8 +108,10 @@ row_height   = 44   # minimum row height
 Config is read once at startup. To apply any changes, restart the app — no logout needed:
 
 ```bash
-pkill -f clipboard-manager && clipboard-manager &
+clipboard-manager reload
 ```
+
+The `reload` command stops the running daemon and starts a fresh one in the background automatically.
 
 ## Uninstall
 ```bash
@@ -139,13 +141,19 @@ Three levels depending on what you're changing:
 ```bash
 cargo build --release && ./target/release/clipboard-manager
 ```
+The app backgrounds itself automatically. To see log output instead, set `RUST_LOG`:
+```bash
+RUST_LOG=debug ./target/release/clipboard-manager
+```
 Kill it with `pkill -f clipboard-manager`.
 
 **2. Full .deb lifecycle — tests install/remove scripts end-to-end:**
 ```bash
 cargo build --release
 cargo deb
-sudo apt install ./target/debian/clipboard-manager_*.deb
+# Copy to /tmp so apt can access it as the _apt user (home dirs are not world-readable)
+cp target/debian/clipboard-manager_*.deb /tmp/
+sudo apt install /tmp/clipboard-manager_*.deb
 # test the app...
 sudo apt remove clipboard-manager
 ```
