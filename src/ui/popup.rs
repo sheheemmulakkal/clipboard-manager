@@ -6,7 +6,7 @@ use std::time::Duration;
 use gtk4::prelude::*;
 use gtk4::{
     Application, Button, CssProvider, EventControllerKey, GestureClick, Label, ListBox,
-    Orientation, ScrolledWindow, SelectionMode, Window, WindowHandle,
+    Orientation, ScrolledWindow, SearchEntry, SelectionMode, Window, WindowHandle,
 };
 
 use crate::clipboard::ClipboardEntry;
@@ -40,6 +40,7 @@ pub struct ClipboardPopup {
     undo_tick:           Rc<RefCell<Option<glib::SourceId>>>,
     platform:            Arc<dyn Platform>,
     nerd_font:           bool,
+    search_entry:        SearchEntry,
 }
 
 impl ClipboardPopup {
@@ -88,6 +89,34 @@ impl ClipboardPopup {
         header_row.append(&clear_btn);
         handle.set_child(Some(&header_row));
         vbox.append(&handle);
+
+        // ── Search bar ────────────────────────────────────────────────────────
+        let search_bar = gtk4::Box::new(Orientation::Horizontal, 6);
+        search_bar.add_css_class("search-bar");
+        search_bar.set_margin_start(10);
+        search_bar.set_margin_end(10);
+        search_bar.set_margin_top(6);
+        search_bar.set_margin_bottom(6);
+
+        let search_entry = SearchEntry::new();
+        search_entry.add_css_class("search-entry");
+        search_entry.set_placeholder_text(Some("Search\u{2026}"));
+        search_entry.set_hexpand(true);
+
+        let esc_hint = Label::new(Some("Esc to clear"));
+        esc_hint.add_css_class("search-hint");
+        esc_hint.set_visible(false);
+
+        {
+            let hint = esc_hint.clone();
+            search_entry.connect_changed(move |se| {
+                hint.set_visible(!se.text().is_empty());
+            });
+        }
+
+        search_bar.append(&search_entry);
+        search_bar.append(&esc_hint);
+        vbox.append(&search_bar);
 
         let scrolled = ScrolledWindow::builder()
             .hscrollbar_policy(gtk4::PolicyType::Never)
@@ -192,12 +221,17 @@ impl ClipboardPopup {
             let lb      = list_box.clone();
             let rd      = Rc::clone(&row_data);
             let os      = Rc::clone(&on_select);
+            let se      = search_entry.clone();
 
             key_ctrl.connect_key_pressed(move |_, key, _, _| {
                 use glib::Propagation;
                 match key {
                     k if k == gdk4::Key::Escape => {
-                        win_ref.set_visible(false);
+                        if !se.text().is_empty() {
+                            se.set_text("");
+                        } else {
+                            win_ref.set_visible(false);
+                        }
                         Propagation::Stop
                     }
                     k if k == gdk4::Key::Up => {
@@ -210,7 +244,14 @@ impl ClipboardPopup {
                         Propagation::Stop
                     }
                     k if k == gdk4::Key::Down => {
-                        let next = lb.selected_row().map(|r| r.index() + 1).unwrap_or(0);
+                        // When search entry has focus, Down always jumps to the
+                        // first list item (row 0) rather than advancing from the
+                        // currently selected row, which would skip row 0.
+                        let next = if se.has_focus() {
+                            0
+                        } else {
+                            lb.selected_row().map(|r| r.index() + 1).unwrap_or(0)
+                        };
                         if let Some(row) = lb.row_at_index(next) {
                             lb.select_row(Some(&row));
                             row.grab_focus();
@@ -320,7 +361,7 @@ impl ClipboardPopup {
             window, list_box, row_data,
             on_select, on_copy, on_terminal_paste, on_remove, on_pin, on_clear,
             undo_bar, undo_label, undo_pending, undo_tick,
-            platform, nerd_font,
+            platform, nerd_font, search_entry,
         }
     }
 
@@ -383,7 +424,17 @@ impl ClipboardPopup {
         }
         drop(data);
 
-        if let Some(first) = self.list_box.row_at_index(0) {
+        if entries.is_empty() {
+            let row   = gtk4::ListBoxRow::new();
+            let label = Label::new(Some("No matches"));
+            label.add_css_class("empty-label");
+            label.set_margin_top(16);
+            label.set_margin_bottom(16);
+            row.set_activatable(false);
+            row.set_selectable(false);
+            row.set_child(Some(&label));
+            self.list_box.append(&row);
+        } else if let Some(first) = self.list_box.row_at_index(0) {
             self.list_box.select_row(Some(&first));
         }
     }
@@ -459,12 +510,12 @@ impl ClipboardPopup {
 
         self.window.present();
 
-        let lb       = self.list_box.clone();
+        let se       = self.search_entry.clone();
         let win      = self.window.clone();
         let platform = Arc::clone(&self.platform);
 
         glib::timeout_add_local_once(Duration::from_millis(50), move || {
-            if let Some(first) = lb.row_at_index(0) { first.grab_focus(); }
+            se.grab_focus();
             if let Some((cx, cy)) = cursor {
                 move_window_near_cursor(&win, &*platform, cx, cy);
             }
@@ -473,10 +524,20 @@ impl ClipboardPopup {
 
     pub fn show_centered(&self) {
         self.window.present();
-        let lb = self.list_box.clone();
+        let se = self.search_entry.clone();
         glib::timeout_add_local_once(Duration::from_millis(0), move || {
-            if let Some(first) = lb.row_at_index(0) { first.grab_focus(); }
+            se.grab_focus();
         });
+    }
+
+    pub fn connect_search_changed(&self, cb: impl Fn(String) + 'static) {
+        self.search_entry.connect_search_changed(move |se| {
+            cb(se.text().to_string());
+        });
+    }
+
+    pub fn clear_search(&self) {
+        self.search_entry.set_text("");
     }
 
     pub fn hide(&self) {

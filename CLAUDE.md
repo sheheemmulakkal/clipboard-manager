@@ -71,6 +71,8 @@ The codebase uses the Strategy pattern twice — once for hotkeys and once for p
 
 When the popup is triggered, a **repopulate closure** is built inside `Rc<RefCell<Option<Box<dyn Fn()>>>>` and immediately called. This pattern avoids circular closure references: `on_remove` and `on_pin` callbacks mutate the store, then call `repop.borrow().as_ref().unwrap()()` to refresh the list.
 
+**Search state** lives in two `Rc<RefCell<...>>` values created once alongside the popup (outside the poll loop): `search_query` (current filter string) and `repop_shared` (pointer to the current session's repopulate closure, updated on each popup open). `popup.connect_search_changed` writes to `search_query` and calls `repop_shared`. Inside the repopulate closure, `filter_entries(sorted_entries(...), &query)` applies the filter before passing entries to `popup.populate()`.
+
 ### Paste Flow
 
 1. Hotkey fires → background thread calls `platform.capture_active_window()` → sends `Option<u64>` (X11 window ID) over `hotkey_tx`
@@ -89,6 +91,7 @@ When the popup is triggered, a **repopulate closure** is built inside `Rc<RefCel
 - `item_row.rs` — `build_item_row()` returns a GTK widget + `RowAction` enum; pin/delete buttons are CSS-opacity-hidden until hover.
 - Popup positioning: `show_at_cursor()` reads `platform.cursor_position()`, shows the window, then after 50ms defers `platform.move_popup()`. Falls back to `show_centered()` on Wayland.
 - CSS (Catppuccin Mocha palette) is embedded via `include_str!("../../assets/style.css")` at compile time.
+- **Search**: `SearchEntry` is placed between the header and the list. On each popup open the query is cleared and the entry is focused. Typing filters entries via `filter_entries()` in `app.rs` (case-insensitive substring match on content and label). Pinned-first ordering is preserved because `sorted_entries()` runs before filtering. Down arrow from the search entry jumps to list row 0; Escape clears search text first, then closes on a second press.
 
 ### Config (`src/config.rs`)
 

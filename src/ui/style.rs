@@ -230,6 +230,44 @@ row:selected .row-actions {{
     color: {error};
     background-color: {error_hover_bg};
 }}
+
+/* ── Search bar ──────────────────────────────────────────────────────── */
+.search-bar {{
+    border-bottom: 1px solid {border};
+    background-color: {bg};
+}}
+
+.search-entry {{
+    background-color: {row_hover};
+    color: {text};
+    border: 1px solid {border};
+    border-radius: 6px;
+    box-shadow: none;
+    font-size: {fp}px;
+    min-height: 32px;
+}}
+
+.search-entry:focus {{
+    border-color: {accent};
+    box-shadow: 0 0 0 1px {accent};
+    outline: none;
+}}
+
+/* Hint label: "Esc to clear" — appears when search entry has text */
+.search-hint {{
+    color: {text_muted};
+    font-size: 10px;
+    border: 1px solid {border};
+    border-radius: 4px;
+    padding: 1px 5px;
+}}
+
+/* ── Empty search results ────────────────────────────────────────────── */
+.empty-label {{
+    color: {text_muted};
+    font-size: {fp}px;
+    font-style: italic;
+}}
 "#
     )
 }

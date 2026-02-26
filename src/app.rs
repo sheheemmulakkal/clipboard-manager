@@ -112,6 +112,19 @@ impl App {
 
             let popup = Rc::new(ClipboardPopup::new(app, Arc::clone(&platform), nerd_font, &colors, &sizes));
 
+            // ── Search state ──────────────────────────────────────────────────
+            let search_query: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
+            let repop_shared: Rc<RefCell<Option<Box<dyn Fn()>>>> = Rc::new(RefCell::new(None));
+
+            popup.connect_search_changed({
+                let sq = Rc::clone(&search_query);
+                let rs = Rc::clone(&repop_shared);
+                move |q| {
+                    *sq.borrow_mut() = q;
+                    if let Some(f) = rs.borrow().as_ref() { f(); }
+                }
+            });
+
             // ── Clipboard monitor ─────────────────────────────────────────
             let store_for_monitor = Rc::clone(&store);
             let store_for_cb      = Rc::clone(&store);
@@ -172,6 +185,12 @@ impl App {
                 if let Some(prev_win) = show_trigger {
                     prev_window_id.set(prev_win);
 
+                    // Clear search on each popup open
+                    let search_query_open = Rc::clone(&search_query);
+                    let repop_shared_open = Rc::clone(&repop_shared);
+                    *search_query_open.borrow_mut() = String::new();
+                    popup_for_timer.clear_search();
+
                     // ── The "repopulate" closure ──────────────────────────
                     // Stored in Rc<RefCell<Option<Box<dyn Fn()>>>> so that
                     // on_remove / on_pin callbacks can call it after mutating
@@ -187,8 +206,11 @@ impl App {
                     // Clone platform for use inside the repopulate closure.
                     let platform_inner = Arc::clone(&platform);
 
+                    let sq_r = Rc::clone(&search_query_open);
                     *repopulate.borrow_mut() = Some(Box::new(move || {
-                        let entries = sorted_entries(&store_r.borrow());
+                        let sorted  = sorted_entries(&store_r.borrow());
+                        let query   = sq_r.borrow().clone();
+                        let entries = filter_entries(sorted, &query);
 
                         let store_sel  = Rc::clone(&store_r);
                         let popup_sel  = Rc::clone(&popup_r);
@@ -319,6 +341,12 @@ impl App {
                         );
                     }));
 
+                    // Point repop_shared at this popup session's repopulate closure
+                    let repop_for_shared = Rc::clone(&repopulate);
+                    *repop_shared_open.borrow_mut() = Some(Box::new(move || {
+                        if let Some(f) = repop_for_shared.borrow().as_ref() { f(); }
+                    }));
+
                     // Trigger first populate + show
                     if let Some(f) = repopulate.borrow().as_ref() {
                         f();
@@ -353,4 +381,19 @@ fn sorted_entries(store: &Box<dyn Store>) -> Vec<ClipboardEntry> {
     });
 
     all
+}
+
+/// Filter entries by a case-insensitive substring match on content or label.
+/// Returns all entries unchanged when `query` is empty.
+fn filter_entries(entries: Vec<ClipboardEntry>, query: &str) -> Vec<ClipboardEntry> {
+    if query.is_empty() { return entries; }
+    let q = query.to_lowercase();
+    entries.into_iter()
+        .filter(|e| {
+            e.content.to_lowercase().contains(&q)
+                || e.label.as_deref()
+                       .map(|l| l.to_lowercase().contains(&q))
+                       .unwrap_or(false)
+        })
+        .collect()
 }
