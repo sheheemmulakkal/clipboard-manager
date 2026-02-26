@@ -147,6 +147,15 @@ impl AppConfig {
             let config: AppConfig = toml::from_str(&text)?;
             Ok(config)
         } else {
+            // Write a default config on first run so the user has a file to edit.
+            // Silently ignore write errors (e.g. read-only filesystem).
+            let _ = (|| -> std::io::Result<()> {
+                if let Some(dir) = path.parent() {
+                    std::fs::create_dir_all(dir)?;
+                }
+                std::fs::write(&path, include_str!("../config/default.toml"))?;
+                Ok(())
+            })();
             Ok(AppConfig::default())
         }
     }

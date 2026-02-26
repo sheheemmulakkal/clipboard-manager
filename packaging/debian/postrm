@@ -56,7 +56,7 @@ case "$1" in
             username=$(stat -c '%U' "$user_home")
             rm -f "$user_home/.config/autostart/clipboard-manager-autostart.desktop" 2>/dev/null || true
             rm -f "$user_home/.config/autostart/clipboard-manager.desktop" 2>/dev/null || true
-            remove_gnome_shortcut "$username"
+            remove_gnome_shortcut "$username" || true
         done
         ;;
 esac
