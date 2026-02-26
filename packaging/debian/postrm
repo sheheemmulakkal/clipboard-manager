@@ -58,6 +58,7 @@ case "$1" in
             rm -f  "$user_home/.config/autostart/clipboard-manager-autostart.desktop" 2>/dev/null || true
             rm -f  "$user_home/.config/autostart/clipboard-manager.desktop"            2>/dev/null || true
             rm -rf "$user_home/.config/clipboard-manager"                              2>/dev/null || true
+            rm -rf "$user_home/.local/share/clipboard-manager"                         2>/dev/null || true
             remove_gnome_shortcut "$username" || true
         done
         ;;

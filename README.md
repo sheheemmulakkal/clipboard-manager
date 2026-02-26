@@ -35,7 +35,9 @@ Or download the `.deb` directly from the [Releases page](../../releases/latest).
 | **Copy only** (no paste) | Click the ⎘ button |
 | **Pin** (keep forever) | Click the ○ / ● button |
 | **Delete** | Click the ✕ button |
+| **Label / color** | Right-click the item row |
 | **Clear all** | Click "Clear All" in the header (with undo) |
+| **Search** | Type in the search bar at the top of the popup |
 | **Keyboard navigation** | ↑ ↓ to move, Enter to paste, Esc to close |
 
 > **Pinned items** are never evicted from history, even when the max history
@@ -44,6 +46,28 @@ Or download the `.deb` directly from the [Releases page](../../releases/latest).
 > **Paste to terminal** uses Ctrl+Shift+V, which is the standard paste shortcut
 > in most terminal emulators. Use this instead of a normal click when your
 > target window is a terminal.
+
+## Item labels and colors
+
+Right-click any row to open the label editor:
+
+- **Title** — type a short name for the item (e.g. "API key", "SSH command").
+  The title appears below the preview text in every subsequent popup.
+- **Color** — pick one of 8 Catppuccin Mocha accent colors, or "none".
+  The chosen color appears as a left border on the row so important items
+  stand out at a glance.
+
+Click **Apply** (or press Enter in the title field) to save. Press Escape to
+discard. Right-click the same row again to edit or clear the label.
+
+Labels and colors are stored in the history file and survive restarts.
+
+## Search
+
+The search bar is always visible at the top of the popup. Start typing to
+filter items by content or label — the filter is case-insensitive and applied
+on top of the pinned-first ordering. Press Esc once to clear the search, and
+again to close the popup.
 
 ## Configuration
 
@@ -113,11 +137,18 @@ clipboard-manager reload
 
 The `reload` command stops the running daemon and starts a fresh one in the background automatically.
 
+## Data files
+
+| File | Purpose |
+|---|---|
+| `~/.config/clipboard-manager/config.toml` | User configuration |
+| `~/.local/share/clipboard-manager/history.bin` | Clipboard history (labels, colors, pins) |
+
 ## Uninstall
 ```bash
 sudo apt remove clipboard-manager
 ```
-This removes the binary, stops the running process, clears autostart entries, and deletes `~/.config/clipboard-manager/`.
+This removes the binary, stops the running process, clears autostart entries, and deletes both `~/.config/clipboard-manager/` and `~/.local/share/clipboard-manager/`.
 
 ## Build from source
 ```bash
@@ -175,9 +206,10 @@ sudo bash packaging/debian/postrm remove
 
 **Verify clean removal:**
 ```bash
-ls ~/.config/clipboard-manager/ 2>/dev/null || echo "clean"
-ls ~/.config/autostart/ | grep clipboard        || echo "clean"
-pgrep -f clipboard-manager                      || echo "clean"
+ls ~/.config/clipboard-manager/            2>/dev/null || echo "clean"
+ls ~/.local/share/clipboard-manager/       2>/dev/null || echo "clean"
+ls ~/.config/autostart/ | grep clipboard               || echo "clean"
+pgrep -f clipboard-manager                             || echo "clean"
 ```
 
 ## License

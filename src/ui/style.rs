@@ -268,6 +268,76 @@ row:selected .row-actions {{
     font-size: {fp}px;
     font-style: italic;
 }}
+
+/* ── User label tag (shown below the preview when a label is set) ───── */
+.label-tag {{
+    color: {text_muted};
+    font-size: smaller;
+}}
+
+/* ── Color accent borders — override pinned border when both present ── */
+.item-row-color-red    {{ border-left: 3px solid #f38ba8; padding-left: 7px; }}
+.item-row-color-pink   {{ border-left: 3px solid #f2cdcd; padding-left: 7px; }}
+.item-row-color-mauve  {{ border-left: 3px solid #cba6f7; padding-left: 7px; }}
+.item-row-color-blue   {{ border-left: 3px solid #89b4fa; padding-left: 7px; }}
+.item-row-color-teal   {{ border-left: 3px solid #94e2d5; padding-left: 7px; }}
+.item-row-color-green  {{ border-left: 3px solid #a6e3a1; padding-left: 7px; }}
+.item-row-color-yellow {{ border-left: 3px solid #f9e2af; padding-left: 7px; }}
+.item-row-color-peach  {{ border-left: 3px solid #fab387; padding-left: 7px; }}
+
+/* ── Right-click label popover ───────────────────────────────────────── */
+.popover-form-label {{
+    color: {text_muted};
+    font-size: smaller;
+    min-width: 40px;
+}}
+
+.apply-btn {{
+    font-size: 11px;
+    padding: 3px 12px;
+    border-radius: 5px;
+    background-color: {btn_hover_bg};
+    border: 1px solid {border};
+    color: {text};
+    box-shadow: none;
+    transition: background-color 150ms ease;
+}}
+
+.apply-btn:hover {{
+    background-color: alpha({text}, 0.2);
+}}
+
+/* Swatch base */
+.color-swatch {{
+    min-width: 18px;
+    min-height: 18px;
+    border-radius: 50%;
+    padding: 0;
+    border: 2px solid transparent;
+    box-shadow: none;
+}}
+
+.color-swatch:hover      {{ border-color: alpha({text}, 0.4); }}
+.color-swatch-active     {{ border-color: {text}; }}
+
+/* "none" button is wider and pill-shaped */
+.color-swatch-none {{
+    min-width: 32px;
+    border-radius: 4px;
+    font-size: 10px;
+    background: alpha({text}, 0.08);
+    color: {text_muted};
+}}
+
+/* Per-color swatch backgrounds */
+.color-swatch-red    {{ background: #f38ba8; }}
+.color-swatch-pink   {{ background: #f2cdcd; }}
+.color-swatch-mauve  {{ background: #cba6f7; }}
+.color-swatch-blue   {{ background: #89b4fa; }}
+.color-swatch-teal   {{ background: #94e2d5; }}
+.color-swatch-green  {{ background: #a6e3a1; }}
+.color-swatch-yellow {{ background: #f9e2af; }}
+.color-swatch-peach  {{ background: #fab387; }}
 "#
     )
 }

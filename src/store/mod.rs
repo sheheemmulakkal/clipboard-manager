@@ -1,5 +1,10 @@
 pub mod memory;
 
+#[cfg(feature = "persist")]
+pub mod engine;
+#[cfg(feature = "persist")]
+pub mod persistent;
+
 use crate::clipboard::entry::ClipboardEntry;
 
 #[allow(dead_code)]
@@ -11,6 +16,7 @@ pub trait Store: Send + Sync {
     fn contains_content(&self, content: &str) -> bool;
     fn len(&self) -> usize;
     fn set_pinned(&mut self, id: u64, pinned: bool);
+    fn set_label(&mut self, id: u64, label: Option<String>, color: Option<String>);
     /// Remove all entries that are not pinned.
     fn clear_unpinned(&mut self);
 }

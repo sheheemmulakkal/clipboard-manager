@@ -41,6 +41,13 @@ impl Store for MemoryStore {
         }
     }
 
+    fn set_label(&mut self, id: u64, label: Option<String>, color: Option<String>) {
+        if let Some(e) = self.entries.iter_mut().find(|e| e.id == id) {
+            e.label = label;
+            e.color = color;
+        }
+    }
+
     fn clear_unpinned(&mut self) {
         self.entries.retain(|e| e.pinned);
     }

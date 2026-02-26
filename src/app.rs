@@ -12,6 +12,7 @@ use crate::clipboard::ClipboardEntry;
 use crate::config::AppConfig;
 use crate::hotkey;
 use crate::platform;
+#[cfg(not(feature = "persist"))]
 use crate::store::memory::MemoryStore;
 use crate::store::Store;
 use crate::ui::ClipboardPopup;
@@ -31,8 +32,21 @@ impl App {
             tracing::warn!("[autostart] {e}");
         }
 
-        let store: Box<dyn Store> =
-            Box::new(MemoryStore::new(config.max_history, config.deduplicate));
+        let store: Box<dyn Store> = {
+            #[cfg(feature = "persist")]
+            {
+                use crate::store::persistent::PersistentStore;
+                let path = dirs::data_dir()
+                    .unwrap_or_else(|| std::path::PathBuf::from("."))
+                    .join("clipboard-manager")
+                    .join("history.bin");
+                Box::new(PersistentStore::load(config.max_history, config.deduplicate, path))
+            }
+            #[cfg(not(feature = "persist"))]
+            {
+                Box::new(MemoryStore::new(config.max_history, config.deduplicate))
+            }
+        };
         let store = Rc::new(RefCell::new(store));
 
         Ok(Self { config, store, prev_window_id: Rc::new(Cell::new(None)) })
@@ -222,6 +236,9 @@ impl App {
                         let store_pin  = Rc::clone(&store_r);
                         let repop_pin  = Rc::clone(&repop_r);
 
+                        let store_lbl  = Rc::clone(&store_r);
+                        let repop_lbl  = Rc::clone(&repop_r);
+
                         let store_clr  = Rc::clone(&store_r);
                         let repop_clr  = Rc::clone(&repop_r);
                         let popup_clr  = Rc::clone(&popup_r);
@@ -302,6 +319,12 @@ impl App {
                                 store_pin.borrow_mut().set_pinned(id, pinned);
                                 tracing::debug!("[pin] id={id} pinned={pinned}");
                                 if let Some(f) = repop_pin.borrow().as_ref() { f(); }
+                            },
+                            // ── on_label ──────────────────────────────────
+                            move |id, label, color| {
+                                store_lbl.borrow_mut().set_label(id, label, color);
+                                tracing::debug!("[label] id={id}");
+                                if let Some(f) = repop_lbl.borrow().as_ref() { f(); }
                             },
                             // ── on_clear ──────────────────────────────────
                             // Does NOT clear the store yet — delegates to

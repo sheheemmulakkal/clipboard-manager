@@ -37,7 +37,7 @@ There are no automated tests in this project.
 ## Features / Feature Flags
 
 - `ui` (default) — enables GTK4 (`gtk4`, `glib`, `gdk4`, `gdk4-x11`)
-- `persist` — optional SQLite persistence via `rusqlite` (not wired up yet)
+- `persist` (default) — binary history persistence; pure std, no external deps
 
 ## Architecture
 
@@ -73,6 +73,8 @@ When the popup is triggered, a **repopulate closure** is built inside `Rc<RefCel
 
 **Search state** lives in two `Rc<RefCell<...>>` values created once alongside the popup (outside the poll loop): `search_query` (current filter string) and `repop_shared` (pointer to the current session's repopulate closure, updated on each popup open). `popup.connect_search_changed` writes to `search_query` and calls `repop_shared`. Inside the repopulate closure, `filter_entries(sorted_entries(...), &query)` applies the filter before passing entries to `popup.populate()`.
 
+**Label/color flow**: the `on_label` callback (7th arg to `populate()`) calls `store.set_label(id, label, color)` then re-calls the repopulate closure, so the row immediately reflects the new title and color border without reopening the popup.
+
 ### Paste Flow
 
 1. Hotkey fires → background thread calls `platform.capture_active_window()` → sends `Option<u64>` (X11 window ID) over `hotkey_tx`
@@ -83,14 +85,32 @@ When the popup is triggered, a **repopulate closure** is built inside `Rc<RefCel
 
 ### Store (`src/store/`)
 
-`Store` trait is `Box<dyn Store>` wrapped in `Rc<RefCell<...>>` for single-threaded interior mutability. `MemoryStore` is the only implementation; it caps history at `max_history` by evicting the oldest non-pinned entry. Pinned entries are never evicted.
+`Store` trait is `Box<dyn Store>` wrapped in `Rc<RefCell<...>>` for single-threaded interior mutability. `MemoryStore` is the only in-memory implementation; it caps history at `max_history` by evicting the oldest non-pinned entry. Pinned entries are never evicted.
+
+**Persistence** (`src/store/engine.rs`, `src/store/persistent.rs`): when the `persist` feature is enabled (default), `PersistentStore` wraps `MemoryStore` as a decorator — every mutating method delegates to the inner store then calls `flush()`. History is written atomically (`.tmp` + rename) to `~/.local/share/clipboard-manager/history.bin`.
+
+Binary format (V2): 22-byte file header (`b"CLIPMGR1"`, version u16 LE, flags, count, reserved) followed by variable-length entries:
+```
+id(8) copied_at(8) pinned(1) pad(3) content_len(4) content(n)
+has_label(1) [label_len(4) label(n)]
+has_color(1) [color_len(4) color(n)]
+crc32(4)
+```
+V1 files (no color field) are loaded via `read_entry_v1` with `color = None` and re-saved as V2 on the next flush.
+
+**`set_label(id, label, color)`** — new `Store` trait method that sets a user-defined title and/or Catppuccin color name on a single entry. Implemented in both `MemoryStore` and `PersistentStore`.
 
 ### UI (`src/ui/`)
 
-- `ClipboardPopup` owns the GTK `Window`. All callbacks (`on_select`, `on_copy`, `on_remove`, `on_pin`, `on_clear`) are stored as `Rc<RefCell<Option<Rc<dyn Fn(...)>>>>` so they can be replaced on each repopulate without rebuilding the window.
-- `item_row.rs` — `build_item_row()` returns a GTK widget + `RowAction` enum; pin/delete buttons are CSS-opacity-hidden until hover.
+- `ClipboardPopup` owns the GTK `Window`. All callbacks (`on_select`, `on_copy`, `on_remove`, `on_pin`, `on_label`, `on_clear`) are stored as `Rc<RefCell<Option<Rc<dyn Fn(...)>>>>` so they can be replaced on each repopulate without rebuilding the window. `populate()` takes 7 callbacks; the 7th is `on_label(id, label, color)`.
+- `item_row.rs` — `build_item_row()` returns a GTK widget + `RowAction` enum; pin/delete buttons are CSS-opacity-hidden until hover. A `suppress_close: Rc<Cell<u32>>` counter is threaded in from `ClipboardPopup` to prevent the focus-loss close handler from firing while a child popover is open.
+  - `pub const PALETTE` — 8 Catppuccin Mocha `(name, hex)` pairs shared with `style.rs`.
+  - `RowAction::SetLabel { label, color }` — dispatched when the right-click popover is committed.
+  - **Right-click popover**: `GestureClick(button=3)` on each row opens a `gtk4::Popover` with a title `Entry` and 8 color-swatch `Button`s + a "none" button. Apply (or Enter) commits; Escape discards. `suppress_close` is incremented before `popup()` and decremented after one `idle_add_local_once` tick in `connect_closed`, ensuring no gap between consecutive popovers.
+  - Color CSS class `item-row-color-{name}` is added to the row when `entry.color` is set. If both a color and pin are set, the color border takes visual precedence (declared later in CSS).
+  - When `entry.label` is set, the preview area uses a vertical `Box`: `preview_label` on top, `.label-tag` Label below.
 - Popup positioning: `show_at_cursor()` reads `platform.cursor_position()`, shows the window, then after 50ms defers `platform.move_popup()`. Falls back to `show_centered()` on Wayland.
-- CSS (Catppuccin Mocha palette) is embedded via `include_str!("../../assets/style.css")` at compile time.
+- CSS is generated at runtime by `src/ui/style.rs` (`generate_css(colors, sizes)`). Includes color-border classes (`.item-row-color-{name}`), label-tag styling, and popover swatch CSS.
 - **Search**: `SearchEntry` is placed between the header and the list. On each popup open the query is cleared and the entry is focused. Typing filters entries via `filter_entries()` in `app.rs` (case-insensitive substring match on content and label). Pinned-first ordering is preserved because `sorted_entries()` runs before filtering. Down arrow from the search entry jumps to list row 0; Escape clears search text first, then closes on a second press.
 
 ### Config (`src/config.rs`)

@@ -1,6 +1,6 @@
 [package]
 name = "clipboard-manager"
-version = "1.0.4"
+version = "1.1.0"
 edition = "2021"
 description = "Clipboard history manager for Ubuntu — press Ctrl+Alt+C to open clipboard history"
 license = "MIT"
@@ -44,16 +44,10 @@ version = "0.9"
 optional = true
 
 
-[dependencies.rusqlite]
-version = "0.31"
-optional = true
-features = ["bundled"]
-
-
 [features]
-default = ["ui"]
-ui = ["gtk4", "glib", "gdk4", "gdk4-x11"]
-persist = ["rusqlite"]
+default = ["ui", "persist"]
+ui      = ["gtk4", "glib", "gdk4", "gdk4-x11"]
+persist = []                                      # pure std — no external dependencies
 
 
 # Optimize release builds for size

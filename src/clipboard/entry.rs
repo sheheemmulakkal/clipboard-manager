@@ -8,6 +8,7 @@ pub struct ClipboardEntry {
     pub copied_at: u64,
     pub pinned: bool,
     pub label: Option<String>,
+    pub color: Option<String>,
 }
 
 impl ClipboardEntry {
@@ -22,6 +23,7 @@ impl ClipboardEntry {
             copied_at,
             pinned: false,
             label: None,
+            color: None,
         }
     }
 
