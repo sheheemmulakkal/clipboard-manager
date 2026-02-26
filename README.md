@@ -10,7 +10,7 @@ Rust and GTK4.
 
 ### One-line install (Ubuntu 20.04 / 22.04 / 24.04)
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sheheemmulakkal/clipboard-manager/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/sheheemmulakkal/clipboard-manager/master/install.sh | bash
 ```
 
 Or download the `.deb` directly from the [Releases page](../../releases/latest).
@@ -20,15 +20,10 @@ Or download the `.deb` directly from the [Releases page](../../releases/latest).
 - X11 session — at login, choose **"Ubuntu on Xorg"**
 
 ## Usage
-1. The app starts automatically on login (no action needed)
+1. The app starts immediately after install — no reboot or logout needed
 2. Copy text anywhere as usual
 3. Press **Ctrl+Alt+C** — a popup shows your clipboard history
 4. Click any item — it pastes at your cursor
-
-To start it immediately after install (without logging out):
-```bash
-clipboard-manager &
-```
 
 ## Configuration
 Edit `~/.config/clipboard-manager/config.toml`:

@@ -78,15 +78,23 @@ success "Downloaded."
 info "Installing (sudo required)..."
 sudo apt-get install -y "$DEB_FILE" || error "Installation failed."
 
+# ── Start now ────────────────────────────────────────
+# The script is still running as the current user here (only the apt-get call
+# above used sudo), so we can launch the app directly without needing $DISPLAY
+# to survive through sudo.
+if command -v clipboard-manager &>/dev/null; then
+  nohup clipboard-manager &>/dev/null &
+  disown
+  success "Started clipboard-manager in background."
+fi
+
 # ── Done ─────────────────────────────────────────────
 echo ""
 success "Clipboard Manager ${VERSION} installed!"
 echo ""
 echo -e "  ${BOLD}How to use:${NC}"
-echo "    • It will start automatically on next login."
-echo "    • To start it now without logging out:"
-echo "        clipboard-manager &"
-echo "    • Press  Ctrl + Alt + C  to open your clipboard history."
+echo "    • Already running — press  Ctrl + Alt + C  to open clipboard history."
+echo "    • It will also start automatically on every login."
 echo ""
 echo -e "  ${BOLD}To uninstall:${NC}"
 echo "    sudo apt remove clipboard-manager"

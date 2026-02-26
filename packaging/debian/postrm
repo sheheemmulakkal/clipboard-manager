@@ -3,7 +3,17 @@ set -e
 
 case "$1" in
     remove|purge)
+        # Remove system-level autostart (dpkg already removes it as a tracked
+        # asset, but be explicit in case dpkg skips it on errors).
         rm -f /etc/xdg/autostart/clipboard-manager-autostart.desktop
+
+        # Remove user-level autostart files.
+        # When GNOME Startup Applications GUI touches the system autostart entry,
+        # it copies it to ~/.config/autostart/ — that copy is NOT tracked by dpkg
+        # and survives apt remove without this cleanup.
+        for user_home in /home/* /root; do
+            rm -f "$user_home/.config/autostart/clipboard-manager-autostart.desktop" 2>/dev/null || true
+        done
         ;;
 esac
 

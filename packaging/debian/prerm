@@ -1,11 +1,14 @@
 #!/bin/bash
 set -e
 
-# Kill running instances gracefully.
-# Use killall (matches exact process name) instead of pkill -f (matches full
-# command line, which would also match "apt remove clipboard-manager" and kill
-# the package manager itself).
-killall -q clipboard-manager 2>/dev/null || true
+# Kill running instances.
+# Use pkill -x (exact process name match) — safer than pkill -f which would
+# also match "apt remove clipboard-manager" and kill the package manager.
+# Send SIGTERM first, wait briefly, then SIGKILL if still alive.
+if pkill -x -TERM clipboard-manager 2>/dev/null; then
+    sleep 0.5
+    pkill -x -KILL clipboard-manager 2>/dev/null || true
+fi
 
 echo ""
 echo "  Clipboard Manager has been removed."

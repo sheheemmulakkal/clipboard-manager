@@ -73,7 +73,7 @@ jobs:
 
             ### One-line install (recommended)
             ```bash
-            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | bash
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/master/install.sh | bash
             ```
 
             ### Manual install
@@ -87,6 +87,6 @@ jobs:
             - X11 session — at login, select **"Ubuntu on Xorg"**
 
             ### What's new
-            See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
+            See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/master/CHANGELOG.md) for details.
           files: ${{ steps.deb.outputs.DEB_PATH }}
           fail_on_unmatched_files: true
