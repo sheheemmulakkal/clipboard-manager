@@ -4,30 +4,37 @@ set -e
 echo ""
 echo "  ✓ Clipboard Manager installed successfully!"
 echo ""
-echo "  ► How to start now (no reboot needed):"
-echo "    Run:  clipboard-manager &"
-echo "    Or:   Log out and back in — it will start automatically."
-echo ""
 echo "  ► How to use:"
 echo "    Copy any text as normal."
-echo "    Press  Super + V  to see your clipboard history."
-echo "    Click any item to paste it where your cursor is."
+echo "    Press  Ctrl + Alt + C  to open clipboard history."
 echo ""
-echo "  ► Config file (optional):"
+echo "  ► Config file:"
 echo "    ~/.config/clipboard-manager/config.toml"
 echo ""
 echo "  ► To uninstall:"
 echo "    sudo apt remove clipboard-manager"
 echo ""
 
-# If running interactively (not in CI), try to start it right now
-# without requiring a reboot
-if [ -n "$DISPLAY" ] || [ -n "$WAYLAND_DISPLAY" ]; then
-  # Start for all logged-in users (best effort, don't fail if it errors)
-  if command -v clipboard-manager >/dev/null 2>&1; then
-    # Run as the current sudo user if SUDO_USER is set
-    if [ -n "$SUDO_USER" ]; then
-      su - "$SUDO_USER" -c "GDK_BACKEND=x11 nohup clipboard-manager >/dev/null 2>&1 &" || true
+# Try to start the app immediately so the user doesn't need to log out.
+# Runs only when invoked interactively (SUDO_USER is set and a display exists).
+#
+# Problem: postinst runs inside dpkg as root. "su - USER" opens a login shell
+# which resets the environment — $DISPLAY is lost and GTK silently fails.
+# Fix: read DISPLAY from the user's running processes via /proc, then pass it
+# explicitly to runuser (which inherits the env without a login-shell reset).
+if [ -n "$SUDO_USER" ] && command -v clipboard-manager >/dev/null 2>&1; then
+  SUDO_UID=$(id -u "$SUDO_USER" 2>/dev/null) || true
+  if [ -n "$SUDO_UID" ]; then
+    USER_DISPLAY=$(
+      pgrep -u "$SUDO_UID" 2>/dev/null \
+        | xargs -I{} cat /proc/{}/environ 2>/dev/null \
+        | tr '\0' '\n' \
+        | grep -m1 '^DISPLAY=' \
+        | cut -d= -f2-
+    ) || true
+    if [ -n "$USER_DISPLAY" ]; then
+      DISPLAY="$USER_DISPLAY" runuser -u "$SUDO_USER" -- \
+        bash -c 'nohup clipboard-manager >/dev/null 2>&1 &' || true
     fi
   fi
 fi
