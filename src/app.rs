@@ -14,7 +14,6 @@ use crate::hotkey;
 use crate::platform;
 use crate::store::memory::MemoryStore;
 use crate::store::Store;
-use crate::tray::ClipboardTray;
 use crate::ui::ClipboardPopup;
 
 #[allow(dead_code)]
@@ -118,9 +117,7 @@ impl App {
             );
 
             // ── Channels ──────────────────────────────────────────────────
-            let (hotkey_tx, hotkey_rx)       = std::sync::mpsc::sync_channel::<Option<u64>>(1);
-            let (tray_show_tx, tray_show_rx) = std::sync::mpsc::sync_channel::<()>(1);
-            let (tray_quit_tx, tray_quit_rx) = std::sync::mpsc::sync_channel::<()>(1);
+            let (hotkey_tx, hotkey_rx) = std::sync::mpsc::sync_channel::<Option<u64>>(1);
 
             // Expose hotkey_tx to the re-activation handler registered above.
             *show_tx.lock().unwrap() = Some(hotkey_tx.clone());
@@ -155,29 +152,14 @@ impl App {
                 }
             }
 
-            // ── System tray ───────────────────────────────────────────────
-            let tray = ClipboardTray { show_tx: tray_show_tx, quit_tx: tray_quit_tx };
-            let tray_handle = {
-                use ksni::blocking::TrayMethods;
-                match tray.spawn() {
-                    Ok(h)  => Some(h),
-                    Err(e) => { eprintln!("[tray] not available: {e}"); None }
-                }
-            };
-
             let popup_for_timer = Rc::clone(&popup);
             let store_for_timer = Rc::clone(&store);
-            let app_for_quit    = app.clone();
 
             // ── 50 ms poll loop ───────────────────────────────────────────
             glib::timeout_add_local(std::time::Duration::from_millis(50), move || {
                 let _keep_manager = &hotkey_manager;
-                let _keep_tray    = &tray_handle;
 
-                let show_trigger: Option<Option<u64>> = hotkey_rx
-                    .try_recv()
-                    .ok()
-                    .or_else(|| tray_show_rx.try_recv().ok().map(|()| None));
+                let show_trigger: Option<Option<u64>> = hotkey_rx.try_recv().ok();
 
                 if let Some(prev_win) = show_trigger {
                     prev_window_id.set(prev_win);
@@ -311,10 +293,6 @@ impl App {
                     } else {
                         popup_for_timer.show_centered();
                     }
-                }
-
-                if tray_quit_rx.try_recv().is_ok() {
-                    app_for_quit.quit();
                 }
 
                 glib::ControlFlow::Continue
