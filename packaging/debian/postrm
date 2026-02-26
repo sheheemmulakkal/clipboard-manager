@@ -13,6 +13,7 @@ case "$1" in
         # and survives apt remove without this cleanup.
         for user_home in /home/* /root; do
             rm -f "$user_home/.config/autostart/clipboard-manager-autostart.desktop" 2>/dev/null || true
+            rm -f "$user_home/.config/autostart/clipboard-manager.desktop" 2>/dev/null || true
         done
         ;;
 esac
