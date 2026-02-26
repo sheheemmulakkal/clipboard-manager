@@ -131,5 +131,46 @@ cargo deb
 sudo apt install ./target/debian/clipboard-manager_*.deb
 ```
 
+## Testing locally
+
+Three levels depending on what you're changing:
+
+**1. App only (fastest) — no install needed:**
+```bash
+cargo build --release && ./target/release/clipboard-manager
+```
+Kill it with `pkill -f clipboard-manager`.
+
+**2. Full .deb lifecycle — tests install/remove scripts end-to-end:**
+```bash
+cargo build --release
+cargo deb
+sudo apt install ./target/debian/clipboard-manager_*.deb
+# test the app...
+sudo apt remove clipboard-manager
+```
+
+**3. Package scripts only — no rebuild needed:**
+
+When only `prerm`/`postrm` changed, swap them in-place and remove:
+```bash
+sudo cp packaging/debian/prerm  /var/lib/dpkg/info/clipboard-manager.prerm
+sudo cp packaging/debian/postrm /var/lib/dpkg/info/clipboard-manager.postrm
+sudo apt remove clipboard-manager
+```
+
+Or run scripts directly to check for errors:
+```bash
+sudo bash packaging/debian/prerm remove
+sudo bash packaging/debian/postrm remove
+```
+
+**Verify clean removal:**
+```bash
+ls ~/.config/clipboard-manager/ 2>/dev/null || echo "clean"
+ls ~/.config/autostart/ | grep clipboard        || echo "clean"
+pgrep -f clipboard-manager                      || echo "clean"
+```
+
 ## License
 MIT
