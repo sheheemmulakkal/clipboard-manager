@@ -115,8 +115,7 @@ pkill -f clipboard-manager && clipboard-manager &
 ```bash
 sudo apt remove clipboard-manager
 ```
-Your config is kept at `~/.config/clipboard-manager/`.
-Delete that folder to remove everything.
+This removes the binary, stops the running process, clears autostart entries, and deletes `~/.config/clipboard-manager/`.
 
 ## Build from source
 ```bash

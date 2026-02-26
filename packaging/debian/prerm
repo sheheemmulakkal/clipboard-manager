@@ -14,9 +14,6 @@ fi
 
 echo ""
 echo "  Clipboard Manager has been removed."
-echo "  Your clipboard history and config files are kept at:"
-echo "    ~/.config/clipboard-manager/"
-echo "  Delete that folder manually if you want a clean uninstall."
 echo ""
 
 exit 0
