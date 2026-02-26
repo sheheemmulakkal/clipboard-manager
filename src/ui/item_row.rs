@@ -5,12 +5,33 @@ use gtk4::{Button, GestureClick, Label, ListBoxRow, Orientation};
 
 use crate::clipboard::ClipboardEntry;
 
-// ── Unicode icons (no Nerd Font required) ─────────────────────────────────────
-const ICON_PIN_OFF:      &str = "○";   // U+25CB  WHITE CIRCLE
-const ICON_PIN_ON:       &str = "●";   // U+25CF  BLACK CIRCLE
-const ICON_DELETE:       &str = "✕";   // U+2715  MULTIPLICATION X
-const ICON_COPY:         &str = "⎘";   // U+2398  HELM SYMBOL (copy)
-const ICON_TERMINAL:     &str = "⌨";   // U+2328  KEYBOARD (terminal paste)
+// ── Icon sets ─────────────────────────────────────────────────────────────────
+
+struct Icons {
+    pin_off:  &'static str,
+    pin_on:   &'static str,
+    delete:   &'static str,
+    copy:     &'static str,
+    terminal: &'static str,
+}
+
+/// Standard Unicode — works with every font.
+const ICONS_UNICODE: Icons = Icons {
+    pin_off:  "○",   // U+25CB  WHITE CIRCLE
+    pin_on:   "●",   // U+25CF  BLACK CIRCLE
+    delete:   "✕",   // U+2715  MULTIPLICATION X
+    copy:     "⎘",   // U+2398  HELM SYMBOL
+    terminal: "⌨",   // U+2328  KEYBOARD
+};
+
+/// Nerd Font (Material Design) icons — requires a Nerd Font to be installed.
+const ICONS_NERD: Icons = Icons {
+    pin_off:  "󰐃",   // nf-md-pin_outline
+    pin_on:   "󰐄",   // nf-md-pin
+    delete:   "󰗨",   // nf-md-trash_can
+    copy:     "󰆏",   // nf-md-content_copy
+    terminal: "󰆍",   // nf-md-console
+};
 
 #[derive(Clone)]
 pub enum RowAction {
@@ -22,9 +43,12 @@ pub enum RowAction {
 }
 
 pub fn build_item_row(
-    entry: &ClipboardEntry,
+    entry:     &ClipboardEntry,
+    nerd_font: bool,
     on_action: impl Fn(RowAction) + 'static,
 ) -> ListBoxRow {
+    let icons = if nerd_font { &ICONS_NERD } else { &ICONS_UNICODE };
+
     let row = ListBoxRow::new();
     row.add_css_class("item-row");
     if entry.pinned {
@@ -38,7 +62,7 @@ pub fn build_item_row(
 
     // ── Pin indicator ───────────────────────────────────────────────────
     if entry.pinned {
-        let pin_indicator = Label::new(Some(ICON_PIN_ON));
+        let pin_indicator = Label::new(Some(icons.pin_on));
         pin_indicator.add_css_class("pin-indicator");
         hbox.append(&pin_indicator);
     }
@@ -63,26 +87,26 @@ pub fn build_item_row(
     btn_box.add_css_class("row-actions");
 
     // Copy button — copies to clipboard without pasting
-    let copy_btn = Button::with_label(ICON_COPY);
+    let copy_btn = Button::with_label(icons.copy);
     copy_btn.add_css_class("row-btn");
     copy_btn.add_css_class("copy-btn");
     copy_btn.set_tooltip_text(Some("Copy only (no paste)"));
 
     // Terminal paste button — pastes via Ctrl+Shift+V
-    let term_btn = Button::with_label(ICON_TERMINAL);
+    let term_btn = Button::with_label(icons.terminal);
     term_btn.add_css_class("row-btn");
     term_btn.add_css_class("term-btn");
     term_btn.set_tooltip_text(Some("Paste to terminal (Ctrl+Shift+V)"));
 
     // Pin toggle button
-    let pin_label = if entry.pinned { ICON_PIN_ON } else { ICON_PIN_OFF };
+    let pin_label = if entry.pinned { icons.pin_on } else { icons.pin_off };
     let pin_btn = Button::with_label(pin_label);
     pin_btn.add_css_class("row-btn");
     pin_btn.add_css_class(if entry.pinned { "pin-btn-active" } else { "pin-btn" });
     pin_btn.set_tooltip_text(Some(if entry.pinned { "Unpin" } else { "Pin" }));
 
     // Delete button
-    let del_btn = Button::with_label(ICON_DELETE);
+    let del_btn = Button::with_label(icons.delete);
     del_btn.add_css_class("row-btn");
     del_btn.add_css_class("del-btn");
     del_btn.set_tooltip_text(Some("Remove"));

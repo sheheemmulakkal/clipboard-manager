@@ -26,6 +26,9 @@ fn default_popup_follow_cursor() -> bool {
 fn default_clear_undo_timeout_secs() -> u64 {
     5
 }
+fn default_nerd_font() -> bool {
+    false
+}
 
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
@@ -46,6 +49,10 @@ pub struct AppConfig {
     pub popup_follow_cursor: bool,
     #[serde(default = "default_clear_undo_timeout_secs")]
     pub clear_undo_timeout_secs: u64,
+    /// Use Nerd Font icons for action buttons. Requires a Nerd Font to be
+    /// installed and set as the application font. Default: false.
+    #[serde(default = "default_nerd_font")]
+    pub nerd_font: bool,
 }
 
 impl Default for AppConfig {
@@ -59,6 +66,7 @@ impl Default for AppConfig {
             deduplicate: default_deduplicate(),
             popup_follow_cursor:     default_popup_follow_cursor(),
             clear_undo_timeout_secs: default_clear_undo_timeout_secs(),
+            nerd_font:               default_nerd_font(),
         }
     }
 }

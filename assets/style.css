@@ -1,19 +1,19 @@
 window {
-    background-color: #1e1e2e;
+    background-color: @theme_bg_color;
     border-radius: 10px;
-    border: 1px solid #45475a;
+    border: 1px solid @borders;
 }
 
 /* ── Custom drag handle ──────────────────────────────────────────────── */
 .popup-header {
-    background-color: #181825;
+    background-color: shade(@theme_bg_color, 0.92);
     padding: 10px 14px;
     border-radius: 9px 9px 0 0;
-    border-bottom: 1px solid #45475a;
+    border-bottom: 1px solid @borders;
 }
 
 .popup-title {
-    color: #cdd6f4;
+    color: @theme_fg_color;
     font-size: 13px;
     font-weight: bold;
 }
@@ -24,47 +24,47 @@ window {
     padding: 3px 9px;
     border-radius: 5px;
     background-color: transparent;
-    border: 1px solid #45475a;
-    color: #6c7086;
+    border: 1px solid @borders;
+    color: alpha(@theme_fg_color, 0.5);
     box-shadow: none;
     transition: color 150ms ease, border-color 150ms ease, background-color 150ms ease;
 }
 
 .clear-btn:hover {
-    color: #f38ba8;
-    border-color: #f38ba8;
-    background-color: #3b1f22;
+    color: @error_color;
+    border-color: @error_color;
+    background-color: alpha(@error_color, 0.12);
 }
 
 /* ── List ────────────────────────────────────────────────────────────── */
 list {
-    background-color: #1e1e2e;
+    background-color: @theme_bg_color;
 }
 
 list > row {
-    background-color: #1e1e2e;
+    background-color: @theme_bg_color;
     outline: none;
 }
 
 .item-row {
     padding: 8px 10px;
-    border-bottom: 1px solid #313244;
+    border-bottom: 1px solid @borders;
     min-height: 44px;
 }
 
 /* Pinned rows get a subtle left accent */
 .item-row-pinned {
-    border-left: 3px solid #89b4fa;
+    border-left: 3px solid @theme_selected_bg_color;
     padding-left: 7px;
 }
 
 .item-row:hover {
-    background-color: #313244;
+    background-color: alpha(@theme_fg_color, 0.06);
 }
 
 list > row:selected,
 list > row:selected:hover {
-    background-color: #45475a;
+    background-color: alpha(@theme_selected_bg_color, 0.25);
     outline: none;
 }
 
@@ -74,19 +74,19 @@ list > row:focus {
 
 /* ── Text labels ─────────────────────────────────────────────────────── */
 .preview-label {
-    color: #cdd6f4;
+    color: @theme_fg_color;
     font-size: 13px;
 }
 
 .time-label {
-    color: #6c7086;
+    color: alpha(@theme_fg_color, 0.5);
     font-size: 11px;
     margin-left: 4px;
 }
 
 /* ── Pin indicator (small icon shown on pinned rows) ─────────────────── */
 .pin-indicator {
-    color: #89b4fa;
+    color: @theme_selected_bg_color;
     font-size: 11px;
     margin-right: 4px;
 }
@@ -94,12 +94,12 @@ list > row:focus {
 /* ── Undo bar (appears at the bottom after Clear All) ───────────────── */
 .undo-bar {
     padding: 8px 12px;
-    background-color: #181825;
-    border-top: 1px solid #45475a;
+    background-color: shade(@theme_bg_color, 0.92);
+    border-top: 1px solid @borders;
 }
 
 .undo-label {
-    color: #a6adc8;
+    color: @theme_fg_color;
     font-size: 12px;
 }
 
@@ -107,15 +107,15 @@ list > row:focus {
     font-size: 12px;
     padding: 3px 10px;
     border-radius: 5px;
-    background-color: #313244;
-    border: 1px solid #45475a;
-    color: #cdd6f4;
+    background-color: alpha(@theme_fg_color, 0.08);
+    border: 1px solid @borders;
+    color: @theme_fg_color;
     box-shadow: none;
     transition: background-color 150ms ease;
 }
 
 .undo-btn:hover {
-    background-color: #45475a;
+    background-color: alpha(@theme_fg_color, 0.15);
 }
 
 /* ── Row action buttons ──────────────────────────────────────────────── */
@@ -139,27 +139,27 @@ row:selected .row-actions {
     background: transparent;
     border: none;
     box-shadow: none;
-    color: #6c7086;
+    color: alpha(@theme_fg_color, 0.5);
     transition: color 150ms ease, background-color 150ms ease;
 }
 
 .row-btn:hover {
-    background-color: #45475a;
-    color: #cdd6f4;
+    background-color: alpha(@theme_fg_color, 0.12);
+    color: @theme_fg_color;
 }
 
 /* Pin button — highlighted when item is pinned */
 .pin-btn-active {
-    color: #89b4fa;
+    color: @theme_selected_bg_color;
 }
 
 .pin-btn-active:hover {
-    color: #74c7ec;
-    background-color: #313244;
+    color: @theme_selected_bg_color;
+    background-color: alpha(@theme_selected_bg_color, 0.15);
 }
 
-/* Delete button — red on hover */
+/* Delete button — destructive color on hover */
 .del-btn:hover {
-    color: #f38ba8;
-    background-color: #3b1f22;
+    color: @error_color;
+    background-color: alpha(@error_color, 0.12);
 }

@@ -69,6 +69,7 @@ impl App {
         let hotkey_str              = self.config.hotkey.clone();
         let popup_follow_cursor     = self.config.popup_follow_cursor;
         let clear_undo_timeout_secs = self.config.clear_undo_timeout_secs;
+        let nerd_font               = self.config.nerd_font;
         let prev_window_id          = Rc::clone(&self.prev_window_id);
 
         // ── Single-instance re-activation ─────────────────────────────────────
@@ -102,7 +103,7 @@ impl App {
             let prev_window_id = Rc::clone(&prev_window_id);
             let store          = Rc::clone(&store);
 
-            let popup = Rc::new(ClipboardPopup::new(app, Arc::clone(&platform)));
+            let popup = Rc::new(ClipboardPopup::new(app, Arc::clone(&platform), nerd_font));
 
             // ── Clipboard monitor ─────────────────────────────────────────
             let store_for_monitor = Rc::clone(&store);

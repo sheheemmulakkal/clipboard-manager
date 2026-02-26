@@ -37,10 +37,11 @@ pub struct ClipboardPopup {
     undo_pending:        Rc<RefCell<Option<UndoPending>>>,
     undo_tick:           Rc<RefCell<Option<glib::SourceId>>>,
     platform:            Arc<dyn Platform>,
+    nerd_font:           bool,
 }
 
 impl ClipboardPopup {
-    pub fn new(app: &Application, platform: Arc<dyn Platform>) -> Self {
+    pub fn new(app: &Application, platform: Arc<dyn Platform>, nerd_font: bool) -> Self {
         let provider = CssProvider::new();
         provider.load_from_data(include_str!("../../assets/style.css"));
         gtk4::style_context_add_provider_for_display(
@@ -311,7 +312,7 @@ impl ClipboardPopup {
             window, list_box, row_data,
             on_select, on_copy, on_terminal_paste, on_remove, on_pin, on_clear,
             undo_bar, undo_label, undo_pending, undo_tick,
-            platform,
+            platform, nerd_font,
         }
     }
 
@@ -363,7 +364,7 @@ impl ClipboardPopup {
             let cb_rm   = Rc::clone(&on_remove);
             let cb_pin  = Rc::clone(&on_pin);
 
-            let row = build_item_row(entry, move |action| match action {
+            let row = build_item_row(entry, self.nerd_font, move |action| match action {
                 RowAction::Select            => cb_sel(id, content.clone()),
                 RowAction::Copy              => cb_cpy(id, content.clone()),
                 RowAction::TerminalPaste     => cb_tp(id, content.clone()),
