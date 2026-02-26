@@ -2,12 +2,13 @@
 set -e
 
 # Kill running instances.
-# Use pkill -x (exact process name match) — safer than pkill -f which would
-# also match "apt remove clipboard-manager" and kill the package manager.
+# Match the full binary path so we don't accidentally kill the package manager
+# (pkill -f "clipboard-manager" would also match "apt remove clipboard-manager").
+# The installed binary is always /usr/bin/clipboard-manager.
 # Send SIGTERM first, wait briefly, then SIGKILL if still alive.
-if pkill -x -TERM clipboard-manager 2>/dev/null; then
+if pkill -f '/usr/bin/clipboard-manager' 2>/dev/null; then
     sleep 0.5
-    pkill -x -KILL clipboard-manager 2>/dev/null || true
+    pkill -f -KILL '/usr/bin/clipboard-manager' 2>/dev/null || true
 fi
 
 echo ""

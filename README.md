@@ -103,6 +103,14 @@ font_undo    = 12   # undo bar text
 row_height   = 44   # minimum row height
 ```
 
+### Applying config changes
+
+Config is read once at startup. To apply any changes, restart the app — no logout needed:
+
+```bash
+pkill -f clipboard-manager && clipboard-manager &
+```
+
 ## Uninstall
 ```bash
 sudo apt remove clipboard-manager
