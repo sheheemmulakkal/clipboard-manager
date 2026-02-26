@@ -72,6 +72,7 @@ DEB_FILE="${TMP_DIR}/${APP}.deb"
 
 info "Downloading ${APP} ${VERSION}..."
 $DOWNLOAD_FILE "$DEB_FILE" "$DEB_URL" || error "Download failed."
+chmod 644 "$DEB_FILE"
 success "Downloaded."
 
 # ── Install ──────────────────────────────────────────
