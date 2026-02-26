@@ -1,19 +1,62 @@
 #!/bin/bash
 set -e
 
+remove_gnome_shortcut() {
+    local username="$1"
+    local uid
+    uid=$(id -u "$username" 2>/dev/null) || return
+
+    # dconf requires a running D-Bus session — only works if user is logged in.
+    local dbus_sock="/run/user/$uid/bus"
+    [ -S "$dbus_sock" ] || return
+
+    DBUS_SESSION_BUS_ADDRESS="unix:path=$dbus_sock" \
+    runuser -u "$username" -- python3 - <<'PYEOF' 2>/dev/null || true
+import subprocess, re
+
+BASE = 'org.gnome.settings-daemon.plugins.media-keys'
+
+def gs(*args):
+    return subprocess.check_output(['gsettings'] + list(args), text=True).strip()
+
+try:
+    paths_str = gs('get', BASE, 'custom-keybindings')
+except subprocess.CalledProcessError:
+    exit(0)
+
+paths = re.findall(r"'(/[^']+)'", paths_str)
+keep = []
+for p in paths:
+    try:
+        cmd = gs('get', f'{BASE}.custom-keybinding:{p}', 'command')
+        if 'clipboard-manager' in cmd:
+            subprocess.run(['dconf', 'reset', '-f', p], check=False)
+            continue
+    except Exception:
+        pass
+    keep.append(p)
+
+new_val = '[' + ', '.join(f"'{p}'" for p in keep) + ']'
+subprocess.run(['gsettings', 'set', BASE, 'custom-keybindings', new_val], check=False)
+PYEOF
+}
+
 case "$1" in
     remove|purge)
         # Remove system-level autostart (dpkg already removes it as a tracked
         # asset, but be explicit in case dpkg skips it on errors).
         rm -f /etc/xdg/autostart/clipboard-manager-autostart.desktop
 
-        # Remove user-level autostart files.
+        # Remove user-level autostart files and GNOME custom shortcuts.
         # When GNOME Startup Applications GUI touches the system autostart entry,
         # it copies it to ~/.config/autostart/ — that copy is NOT tracked by dpkg
         # and survives apt remove without this cleanup.
         for user_home in /home/* /root; do
+            [ -d "$user_home" ] || continue
+            username=$(stat -c '%U' "$user_home")
             rm -f "$user_home/.config/autostart/clipboard-manager-autostart.desktop" 2>/dev/null || true
             rm -f "$user_home/.config/autostart/clipboard-manager.desktop" 2>/dev/null || true
+            remove_gnome_shortcut "$username"
         done
         ;;
 esac

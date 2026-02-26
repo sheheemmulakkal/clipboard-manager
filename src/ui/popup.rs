@@ -10,8 +10,10 @@ use gtk4::{
 };
 
 use crate::clipboard::ClipboardEntry;
+use crate::config::{ColorConfig, SizeConfig};
 use crate::platform::Platform;
 use crate::ui::item_row::{RowAction, build_item_row};
+use crate::ui::style::generate_css;
 
 // ── Undo state ────────────────────────────────────────────────────────────────
 
@@ -41,9 +43,15 @@ pub struct ClipboardPopup {
 }
 
 impl ClipboardPopup {
-    pub fn new(app: &Application, platform: Arc<dyn Platform>, nerd_font: bool) -> Self {
+    pub fn new(
+        app:       &Application,
+        platform:  Arc<dyn Platform>,
+        nerd_font: bool,
+        colors:    &ColorConfig,
+        sizes:     &SizeConfig,
+    ) -> Self {
         let provider = CssProvider::new();
-        provider.load_from_data(include_str!("../../assets/style.css"));
+        provider.load_from_data(&generate_css(colors, sizes));
         gtk4::style_context_add_provider_for_display(
             &gdk4::Display::default().expect("no GDK display"),
             &provider,
