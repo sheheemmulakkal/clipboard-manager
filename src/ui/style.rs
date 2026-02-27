@@ -338,6 +338,17 @@ row:selected .row-actions {{
 .color-swatch-green  {{ background: #a6e3a1; }}
 .color-swatch-yellow {{ background: #f9e2af; }}
 .color-swatch-peach  {{ background: #fab387; }}
+
+/* ── Image thumbnail preview ──────────────────────────────────────── */
+.thumbnail-preview {{
+    border-radius: 4px;
+    margin: 2px 0;
+}}
+
+.image-type-badge {{
+    font-size: 9px;
+    color: alpha(@theme_fg_color, 0.6);
+}}
 "#
     )
 }

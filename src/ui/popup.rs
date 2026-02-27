@@ -9,7 +9,7 @@ use gtk4::{
     Orientation, ScrolledWindow, SearchEntry, SelectionMode, Window, WindowHandle,
 };
 
-use crate::clipboard::ClipboardEntry;
+use crate::clipboard::entry::{ClipboardContent, ClipboardEntry};
 use crate::config::{ColorConfig, SizeConfig};
 use crate::platform::Platform;
 use crate::ui::item_row::{RowAction, build_item_row};
@@ -27,9 +27,9 @@ struct UndoPending {
 pub struct ClipboardPopup {
     window:              Window,
     list_box:            ListBox,
-    row_data:            Rc<RefCell<Vec<(u64, String, bool)>>>,
-    on_select:           Rc<RefCell<Option<Rc<dyn Fn(u64, String)>>>>,
-    on_copy:             Rc<RefCell<Option<Rc<dyn Fn(u64, String)>>>>,
+    row_data:            Rc<RefCell<Vec<(u64, ClipboardContent, bool)>>>,
+    on_select:           Rc<RefCell<Option<Rc<dyn Fn(u64, ClipboardContent)>>>>,
+    on_copy:             Rc<RefCell<Option<Rc<dyn Fn(u64, ClipboardContent)>>>>,
     on_terminal_paste:   Rc<RefCell<Option<Rc<dyn Fn(u64, String)>>>>,
     on_remove:           Rc<RefCell<Option<Rc<dyn Fn(u64)>>>>,
     on_pin:              Rc<RefCell<Option<Rc<dyn Fn(u64, bool)>>>>,
@@ -149,10 +149,10 @@ impl ClipboardPopup {
         window.set_child(Some(&vbox));
 
         // ── Shared state ──────────────────────────────────────────────────────
-        let row_data:           Rc<RefCell<Vec<(u64, String, bool)>>>         = Rc::new(RefCell::new(vec![]));
-        let on_select:          Rc<RefCell<Option<Rc<dyn Fn(u64, String)>>>> = Rc::new(RefCell::new(None));
-        let on_copy:            Rc<RefCell<Option<Rc<dyn Fn(u64, String)>>>> = Rc::new(RefCell::new(None));
-        let on_terminal_paste:  Rc<RefCell<Option<Rc<dyn Fn(u64, String)>>>> = Rc::new(RefCell::new(None));
+        let row_data:           Rc<RefCell<Vec<(u64, ClipboardContent, bool)>>>         = Rc::new(RefCell::new(vec![]));
+        let on_select:          Rc<RefCell<Option<Rc<dyn Fn(u64, ClipboardContent)>>>> = Rc::new(RefCell::new(None));
+        let on_copy:            Rc<RefCell<Option<Rc<dyn Fn(u64, ClipboardContent)>>>> = Rc::new(RefCell::new(None));
+        let on_terminal_paste:  Rc<RefCell<Option<Rc<dyn Fn(u64, String)>>>>           = Rc::new(RefCell::new(None));
         let on_remove:          Rc<RefCell<Option<Rc<dyn Fn(u64)>>>>         = Rc::new(RefCell::new(None));
         let on_pin:             Rc<RefCell<Option<Rc<dyn Fn(u64, bool)>>>>   = Rc::new(RefCell::new(None));
         let on_label:           Rc<RefCell<Option<Rc<dyn Fn(u64, Option<String>, Option<String>)>>>> = Rc::new(RefCell::new(None));
@@ -265,13 +265,14 @@ impl ClipboardPopup {
                     k if k == gdk4::Key::Return || k == gdk4::Key::KP_Enter => {
                         if let Some(row) = lb.selected_row() {
                             let idx = row.index() as usize;
-                            let (id, content) = {
+                            let item = {
                                 let data = rd.borrow();
                                 data.get(idx).map(|(id, c, _)| (*id, c.clone()))
+                            };
+                            if let Some((id, content)) = item {
+                                let cb = os.borrow().as_ref().map(Rc::clone);
+                                if let Some(cb) = cb { cb(id, content); }
                             }
-                            .unwrap_or_default();
-                            let cb = os.borrow().as_ref().map(Rc::clone);
-                            if let Some(cb) = cb { cb(id, content); }
                         }
                         Propagation::Stop
                     }
@@ -378,13 +379,13 @@ impl ClipboardPopup {
     pub fn populate(
         &self,
         entries:            &[ClipboardEntry],
-        on_select:          impl Fn(u64, String) + 'static,
-        on_copy:            impl Fn(u64, String) + 'static,
-        on_terminal_paste:  impl Fn(u64, String) + 'static,
-        on_remove:          impl Fn(u64)         + 'static,
-        on_pin:             impl Fn(u64, bool)   + 'static,
+        on_select:          impl Fn(u64, ClipboardContent) + 'static,
+        on_copy:            impl Fn(u64, ClipboardContent) + 'static,
+        on_terminal_paste:  impl Fn(u64, String)           + 'static,
+        on_remove:          impl Fn(u64)                   + 'static,
+        on_pin:             impl Fn(u64, bool)             + 'static,
         on_label:           impl Fn(u64, Option<String>, Option<String>) + 'static,
-        on_clear:           impl Fn()            + 'static,
+        on_clear:           impl Fn()                      + 'static,
     ) {
         cancel_tick(&self.undo_tick);
         *self.undo_pending.borrow_mut() = None;
@@ -394,13 +395,13 @@ impl ClipboardPopup {
             self.list_box.remove(&child);
         }
 
-        let on_select:         Rc<dyn Fn(u64, String)> = Rc::new(on_select);
-        let on_copy:           Rc<dyn Fn(u64, String)> = Rc::new(on_copy);
-        let on_terminal_paste: Rc<dyn Fn(u64, String)> = Rc::new(on_terminal_paste);
-        let on_remove:         Rc<dyn Fn(u64)>         = Rc::new(on_remove);
-        let on_pin:            Rc<dyn Fn(u64, bool)>   = Rc::new(on_pin);
+        let on_select:         Rc<dyn Fn(u64, ClipboardContent)> = Rc::new(on_select);
+        let on_copy:           Rc<dyn Fn(u64, ClipboardContent)> = Rc::new(on_copy);
+        let on_terminal_paste: Rc<dyn Fn(u64, String)>           = Rc::new(on_terminal_paste);
+        let on_remove:         Rc<dyn Fn(u64)>                   = Rc::new(on_remove);
+        let on_pin:            Rc<dyn Fn(u64, bool)>             = Rc::new(on_pin);
         let on_label:          Rc<dyn Fn(u64, Option<String>, Option<String>)> = Rc::new(on_label);
-        let on_clear:          Rc<dyn Fn()>            = Rc::new(on_clear);
+        let on_clear:          Rc<dyn Fn()>                      = Rc::new(on_clear);
 
         *self.on_select.borrow_mut()         = Some(Rc::clone(&on_select));
         *self.on_copy.borrow_mut()           = Some(Rc::clone(&on_copy));
@@ -427,9 +428,14 @@ impl ClipboardPopup {
             let sc_row  = Rc::clone(&self.suppress_close);
 
             let row = build_item_row(entry, self.nerd_font, sc_row, move |action| match action {
-                RowAction::Select                    => cb_sel(id, content.clone()),
-                RowAction::Copy                      => cb_cpy(id, content.clone()),
-                RowAction::TerminalPaste             => cb_tp(id, content.clone()),
+                RowAction::Select => cb_sel(id, content.clone()),
+                RowAction::Copy   => cb_cpy(id, content.clone()),
+                RowAction::TerminalPaste => {
+                    // Terminal paste only makes sense for text.
+                    if let ClipboardContent::Text(t) = &content {
+                        cb_tp(id, t.clone());
+                    }
+                }
                 RowAction::Remove                    => cb_rm(id),
                 RowAction::TogglePin(pinned)         => cb_pin(id, pinned),
                 RowAction::SetLabel { label, color } => cb_lbl(id, label, color),

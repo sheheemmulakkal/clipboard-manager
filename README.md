@@ -1,14 +1,15 @@
 # Clipboard Manager
 
 A clipboard history popup for Ubuntu — press **Ctrl+Alt+C** to see everything
-you've recently copied, and click any item to paste it instantly.
+you've recently copied, and click any item to paste it instantly. Supports both
+**text** and **screenshots / images**.
 
 Inspired by the Windows Win+V experience, built natively for Ubuntu with
 Rust and GTK4.
 
 ## Install
 
-### One-line install (Ubuntu 20.04 / 22.04 / 24.04)
+### One-line install (Ubuntu 22.04 / 24.04)
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sheheemmulakkal/clipboard-manager/master/install.sh | bash
 ```
@@ -16,7 +17,7 @@ curl -fsSL https://raw.githubusercontent.com/sheheemmulakkal/clipboard-manager/m
 Or download the `.deb` directly from the [Releases page](../../releases/latest).
 
 ### Requirements
-- Ubuntu 20.04, 22.04, or 24.04 (amd64)
+- **Ubuntu 22.04 or newer** (amd64) — GTK4 (which this app is built on) is available by default only on Ubuntu 22.04+
 - X11 or Wayland session
   - X11: full support (paste, cursor-following popup, hotkey)
   - Wayland: paste via RemoteDesktop portal, hotkey via GlobalShortcuts portal (requires a compatible compositor e.g. GNOME 43+)
@@ -39,6 +40,7 @@ Or download the `.deb` directly from the [Releases page](../../releases/latest).
 | **Clear all** | Click "Clear All" in the header (with undo) |
 | **Search** | Type in the search bar at the top of the popup |
 | **Keyboard navigation** | ↑ ↓ to move, Enter to paste, Esc to close |
+| **Paste image** | Click an image row — the screenshot is restored to your clipboard and pasted |
 
 > **Pinned items** are never evicted from history, even when the max history
 > limit is reached. They appear at the top of the list with a colored left border.
@@ -62,12 +64,33 @@ discard. Right-click the same row again to edit or clear the label.
 
 Labels and colors are stored in the history file and survive restarts.
 
+## Screenshots and images
+
+When you copy an image to the clipboard (e.g. via PrtSc, Snipping Tool, or
+any image editor), the clipboard manager captures it automatically:
+
+- A **thumbnail** (240×135) is shown in the popup row instead of text.
+- Clicking the row restores the full screenshot to your clipboard and pastes it.
+- Images are **deduplicated by SHA-256** — copying the same screenshot twice
+  adds only one entry.
+- Full images and thumbnails are stored in
+  `~/.local/share/clipboard-manager/images/` and are **never loaded into RAM**
+  until you paste — only the file path and dimensions are kept in memory.
+- Orphaned image files (whose history entry was evicted) are cleaned up
+  automatically on the next app start.
+- The terminal-paste button is hidden for image rows (terminals can't receive
+  binary clipboard data via Ctrl+Shift+V).
+
+> **Note:** image capture only triggers when the clipboard contains an image
+> and no text. Entries copied from apps that put both image and text on the
+> clipboard (e.g. LibreOffice cells) are captured as text.
+
 ## Search
 
 The search bar is always visible at the top of the popup. Start typing to
 filter items by content or label — the filter is case-insensitive and applied
-on top of the pinned-first ordering. Press Esc once to clear the search, and
-again to close the popup.
+on top of the pinned-first ordering. Image entries match on `image W×H` or
+their label. Press Esc once to clear the search, and again to close the popup.
 
 ## Configuration
 
@@ -142,7 +165,8 @@ The `reload` command stops the running daemon and starts a fresh one in the back
 | File | Purpose |
 |---|---|
 | `~/.config/clipboard-manager/config.toml` | User configuration |
-| `~/.local/share/clipboard-manager/history.bin` | Clipboard history (labels, colors, pins) |
+| `~/.local/share/clipboard-manager/history.bin` | Clipboard history (text, labels, colors, pins) |
+| `~/.local/share/clipboard-manager/images/` | Captured screenshots (full PNGs + 240×135 thumbnails) |
 
 ## Uninstall
 ```bash
@@ -153,7 +177,7 @@ This removes the binary, stops the running process, clears autostart entries, an
 ## Build from source
 ```bash
 # Install dependencies
-sudo apt install libgtk-4-dev libglib2.0-dev libx11-dev libxtst-dev pkg-config build-essential
+sudo apt install libgtk-4-dev libglib2.0-dev libx11-dev libxtst-dev libgdk-pixbuf-2.0-dev pkg-config build-essential
 
 # Build
 cargo build --release

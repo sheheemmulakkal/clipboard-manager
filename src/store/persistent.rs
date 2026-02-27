@@ -73,7 +73,11 @@ impl Store for PersistentStore {
         self.inner.len()
     }
 
-    fn contains_content(&self, content: &str) -> bool {
-        self.inner.contains_content(content)
+    fn contains_text(&self, text: &str) -> bool {
+        self.inner.contains_text(text)
+    }
+
+    fn contains_image_hash(&self, hash: &[u8; 32]) -> bool {
+        self.inner.contains_image_hash(hash)
     }
 }

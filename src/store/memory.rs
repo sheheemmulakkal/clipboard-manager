@@ -1,10 +1,10 @@
 use std::collections::VecDeque;
 
-use crate::clipboard::entry::ClipboardEntry;
+use crate::clipboard::entry::{ClipboardContent, ClipboardEntry};
 use crate::store::Store;
 
 pub struct MemoryStore {
-    entries: VecDeque<ClipboardEntry>,
+    entries:     VecDeque<ClipboardEntry>,
     max_history: usize,
     deduplicate: bool,
 }
@@ -21,11 +21,14 @@ impl MemoryStore {
 
 impl Store for MemoryStore {
     fn add(&mut self, entry: ClipboardEntry) {
-        if self.deduplicate && self.contains_content(&entry.content) {
-            return;
+        if self.deduplicate {
+            let dupe = match &entry.content {
+                ClipboardContent::Text(t) => self.contains_text(t),
+                ClipboardContent::Image { hash, .. } => self.contains_image_hash(hash),
+            };
+            if dupe { return; }
         }
         if self.entries.len() >= self.max_history {
-            // Evict the oldest non-pinned entry
             if let Some(pos) = self.entries.iter().position(|e| !e.pinned) {
                 self.entries.remove(pos);
             } else {
@@ -64,8 +67,16 @@ impl Store for MemoryStore {
         self.entries.clear();
     }
 
-    fn contains_content(&self, content: &str) -> bool {
-        self.entries.iter().any(|e| e.content == content)
+    fn contains_text(&self, text: &str) -> bool {
+        self.entries.iter().any(|e| {
+            if let ClipboardContent::Text(t) = &e.content { t == text } else { false }
+        })
+    }
+
+    fn contains_image_hash(&self, hash: &[u8; 32]) -> bool {
+        self.entries.iter().any(|e| {
+            if let ClipboardContent::Image { hash: h, .. } = &e.content { h == hash } else { false }
+        })
     }
 
     fn len(&self) -> usize {
@@ -77,46 +88,46 @@ impl Store for MemoryStore {
 mod tests {
     use super::*;
 
-    fn make_entry(id: u64, content: &str) -> ClipboardEntry {
-        ClipboardEntry::new(id, content.to_string())
+    fn make_text(id: u64, content: &str) -> ClipboardEntry {
+        ClipboardEntry::new_text(id, content.to_string())
     }
 
     #[test]
     fn test_add_respects_max_history() {
         let mut store = MemoryStore::new(3, false);
-        store.add(make_entry(1, "a"));
-        store.add(make_entry(2, "b"));
-        store.add(make_entry(3, "c"));
-        store.add(make_entry(4, "d"));
+        store.add(make_text(1, "a"));
+        store.add(make_text(2, "b"));
+        store.add(make_text(3, "c"));
+        store.add(make_text(4, "d"));
         assert_eq!(store.len(), 3);
-        assert!(!store.contains_content("a"));
-        assert!(store.contains_content("d"));
+        assert!(!store.contains_text("a"));
+        assert!(store.contains_text("d"));
     }
 
     #[test]
     fn test_deduplication_skips_duplicates() {
         let mut store = MemoryStore::new(10, true);
-        store.add(make_entry(1, "hello"));
-        store.add(make_entry(2, "hello"));
+        store.add(make_text(1, "hello"));
+        store.add(make_text(2, "hello"));
         assert_eq!(store.len(), 1);
     }
 
     #[test]
     fn test_remove_by_id() {
         let mut store = MemoryStore::new(10, false);
-        store.add(make_entry(1, "a"));
-        store.add(make_entry(2, "b"));
+        store.add(make_text(1, "a"));
+        store.add(make_text(2, "b"));
         store.remove(1);
         assert_eq!(store.len(), 1);
-        assert!(store.contains_content("b"));
-        assert!(!store.contains_content("a"));
+        assert!(store.contains_text("b"));
+        assert!(!store.contains_text("a"));
     }
 
     #[test]
-    fn test_contains_content() {
+    fn test_contains_text() {
         let mut store = MemoryStore::new(10, false);
-        store.add(make_entry(1, "hello world"));
-        assert!(store.contains_content("hello world"));
-        assert!(!store.contains_content("goodbye"));
+        store.add(make_text(1, "hello world"));
+        assert!(store.contains_text("hello world"));
+        assert!(!store.contains_text("goodbye"));
     }
 }

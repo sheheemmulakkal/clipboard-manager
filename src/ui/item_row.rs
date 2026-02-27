@@ -6,7 +6,7 @@ use gtk4::prelude::*;
 use gtk4::glib;
 use gtk4::{Button, Entry, GestureClick, Label, ListBoxRow, Orientation, Popover};
 
-use crate::clipboard::ClipboardEntry;
+use crate::clipboard::entry::{ClipboardContent, ClipboardEntry};
 
 // ── Color palette ─────────────────────────────────────────────────────────────
 
@@ -93,13 +93,38 @@ pub fn build_item_row(
     text_box.set_hexpand(true);
     text_box.set_halign(gtk4::Align::Fill);
 
-    let preview = Label::new(Some(entry.preview()));
-    preview.add_css_class("preview-label");
-    preview.set_halign(gtk4::Align::Start);
-    preview.set_xalign(0.0);
-    preview.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-    preview.set_max_width_chars(48);
-    text_box.append(&preview);
+    match &entry.content {
+        ClipboardContent::Text(_) => {
+            let preview = Label::new(Some(&entry.preview()));
+            preview.add_css_class("preview-label");
+            preview.set_halign(gtk4::Align::Start);
+            preview.set_xalign(0.0);
+            preview.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+            preview.set_max_width_chars(48);
+            text_box.append(&preview);
+        }
+        ClipboardContent::Image { hash, .. } => {
+            // Small "Image" badge above the thumbnail
+            let badge = Label::new(Some("Image"));
+            badge.add_css_class("image-type-badge");
+            badge.set_halign(gtk4::Align::Start);
+            text_box.append(&badge);
+
+            // Thumbnail (pre-generated at capture time)
+            let hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
+            let thumb_path = dirs::data_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join("clipboard-manager")
+                .join("images")
+                .join(format!("{hex}_thumb.png"));
+
+            let picture = gtk4::Picture::for_filename(&thumb_path);
+            picture.set_can_shrink(true);
+            picture.set_size_request(240, 135);
+            picture.add_css_class("thumbnail-preview");
+            text_box.append(&picture);
+        }
+    }
 
     if let Some(lbl) = &entry.label {
         let label_tag = Label::new(Some(lbl));
@@ -126,11 +151,14 @@ pub fn build_item_row(
     copy_btn.add_css_class("copy-btn");
     copy_btn.set_tooltip_text(Some("Copy only (no paste)"));
 
-    // Terminal paste button — pastes via Ctrl+Shift+V
+    // Terminal paste button — pastes via Ctrl+Shift+V (hidden for image entries)
     let term_btn = Button::with_label(icons.terminal);
     term_btn.add_css_class("row-btn");
     term_btn.add_css_class("term-btn");
     term_btn.set_tooltip_text(Some("Paste to terminal (Ctrl+Shift+V)"));
+    if entry.is_image() {
+        term_btn.set_visible(false);
+    }
 
     // Pin toggle button
     let pin_label = if entry.pinned { icons.pin_on } else { icons.pin_off };
@@ -159,7 +187,6 @@ pub fn build_item_row(
     // ── Wire up callbacks ───────────────────────────────────────────────
     let id = entry.id;
     let currently_pinned = entry.pinned;
-    let content = entry.content.clone();
     let entry_label = entry.label.clone();
     let entry_color = entry.color.clone();
 
@@ -217,10 +244,9 @@ pub fn build_item_row(
         row.add_controller(rc_gesture);
     }
 
-    // Store id/content for keyboard handler in popup.rs
+    // Store entry id for reference (content lives in row_data in popup.rs)
     unsafe {
         row.set_data("entry-id", id);
-        row.set_data("entry-content", content);
     }
 
     row

@@ -1,6 +1,6 @@
 [package]
 name = "clipboard-manager"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 description = "Clipboard history manager for Ubuntu — press Ctrl+Alt+C to open clipboard history"
 license = "MIT"
@@ -22,6 +22,7 @@ ashpd = "0.9"
 tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
 futures-util = "0.3"
 evdev = "0.12"
+sha2 = { version = "0.10", optional = true }
 
 
 [dependencies.gtk4]
@@ -44,9 +45,14 @@ version = "0.9"
 optional = true
 
 
+[dependencies.gdk-pixbuf]
+version = "0.20"
+optional = true
+
+
 [features]
 default = ["ui", "persist"]
-ui      = ["gtk4", "glib", "gdk4", "gdk4-x11"]
+ui      = ["gtk4", "glib", "gdk4", "gdk4-x11", "sha2", "gdk-pixbuf"]
 persist = []                                      # pure std — no external dependencies
 
 
@@ -69,7 +75,7 @@ your recent clipboard items and paste any of them into the currently \
 focused window. Similar to the Windows Win+V experience. Requires an \
 X11 session (select Ubuntu on Xorg at login).\
 """
-depends = "$auto, libgtk-4-1, libglib2.0-0"
+depends = "$auto, libgtk-4-1, libglib2.0-0, libgdk-pixbuf-2.0-0"
 section = "utils"
 priority = "optional"
 assets = [

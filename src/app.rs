@@ -7,8 +7,8 @@ use anyhow::{anyhow, Result};
 use gdk4::prelude::*;
 use gtk4::Application;
 
+use crate::clipboard::entry::{ClipboardContent, ClipboardEntry};
 use crate::clipboard::monitor::ClipboardMonitor;
-use crate::clipboard::ClipboardEntry;
 use crate::config::AppConfig;
 use crate::hotkey;
 use crate::platform;
@@ -22,6 +22,7 @@ pub struct App {
     config:         AppConfig,
     store:          Rc<RefCell<Box<dyn Store>>>,
     prev_window_id: Rc<Cell<Option<u64>>>,
+    image_dir:      std::path::PathBuf,
 }
 
 impl App {
@@ -49,7 +50,15 @@ impl App {
         };
         let store = Rc::new(RefCell::new(store));
 
-        Ok(Self { config, store, prev_window_id: Rc::new(Cell::new(None)) })
+        let image_dir = dirs::data_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("clipboard-manager")
+            .join("images");
+
+        // Startup GC: delete image files not referenced by any current store entry.
+        gc_image_files(&image_dir, &store.borrow());
+
+        Ok(Self { config, store, prev_window_id: Rc::new(Cell::new(None)), image_dir })
     }
 
     fn autostart_if_needed() -> Result<()> {
@@ -92,6 +101,7 @@ impl App {
         let colors                  = self.config.colors.clone();
         let sizes                   = self.config.sizes.clone();
         let prev_window_id          = Rc::clone(&self.prev_window_id);
+        let image_dir               = self.image_dir.clone();
 
         // ── Single-instance re-activation ─────────────────────────────────────
         // GTK enforces a single instance via D-Bus (application_id).
@@ -189,6 +199,7 @@ impl App {
 
             let popup_for_timer = Rc::clone(&popup);
             let store_for_timer = Rc::clone(&store);
+            let image_dir_timer = image_dir.clone();
 
             // ── 50 ms poll loop ───────────────────────────────────────────
             glib::timeout_add_local(std::time::Duration::from_millis(50), move || {
@@ -212,10 +223,11 @@ impl App {
                     let repopulate: Rc<RefCell<Option<Box<dyn Fn()>>>> =
                         Rc::new(RefCell::new(None));
 
-                    let store_r  = Rc::clone(&store_for_timer);
-                    let popup_r  = Rc::clone(&popup_for_timer);
-                    let cell_r   = Rc::clone(&prev_window_id);
-                    let repop_r  = Rc::clone(&repopulate);
+                    let store_r   = Rc::clone(&store_for_timer);
+                    let popup_r   = Rc::clone(&popup_for_timer);
+                    let cell_r    = Rc::clone(&prev_window_id);
+                    let repop_r   = Rc::clone(&repopulate);
+                    let image_dir_r = image_dir_timer.clone();
 
                     // Clone platform for use inside the repopulate closure.
                     let platform_inner = Arc::clone(&platform);
@@ -226,9 +238,11 @@ impl App {
                         let query   = sq_r.borrow().clone();
                         let entries = filter_entries(sorted, &query);
 
-                        let store_sel  = Rc::clone(&store_r);
-                        let popup_sel  = Rc::clone(&popup_r);
-                        let cell_sel   = Rc::clone(&cell_r);
+                        let store_sel    = Rc::clone(&store_r);
+                        let popup_sel    = Rc::clone(&popup_r);
+                        let cell_sel     = Rc::clone(&cell_r);
+                        let image_dir_sel = image_dir_r.clone();
+                        let image_dir_cpy = image_dir_r.clone();
 
                         let store_rm   = Rc::clone(&store_r);
                         let repop_rm   = Rc::clone(&repop_r);
@@ -255,9 +269,7 @@ impl App {
                             &entries,
                             // ── on_select: copy + hide + paste ────────────
                             move |_id, content| {
-                                if let Some(display) = gdk4::Display::default() {
-                                    display.clipboard().set_text(&content);
-                                }
+                                set_clipboard_content(&content, &image_dir_sel);
                                 popup_sel.hide();
 
                                 let prev_id    = cell_sel.get();
@@ -281,9 +293,7 @@ impl App {
                             },
                             // ── on_copy: copy to clipboard only (no paste) ─
                             move |_id, content| {
-                                if let Some(display) = gdk4::Display::default() {
-                                    display.clipboard().set_text(&content);
-                                }
+                                set_clipboard_content(&content, &image_dir_cpy);
                                 tracing::debug!("[copy] copied to clipboard (no paste)");
                             },
                             // ── on_terminal_paste: copy + hide + Ctrl+Shift+V
@@ -413,10 +423,72 @@ fn filter_entries(entries: Vec<ClipboardEntry>, query: &str) -> Vec<ClipboardEnt
     let q = query.to_lowercase();
     entries.into_iter()
         .filter(|e| {
-            e.content.to_lowercase().contains(&q)
+            let content_match = match &e.content {
+                ClipboardContent::Text(t) => t.to_lowercase().contains(&q),
+                ClipboardContent::Image { width, height, .. } => {
+                    format!("image {width}\u{00d7}{height}").to_lowercase().contains(&q)
+                }
+            };
+            content_match
                 || e.label.as_deref()
                        .map(|l| l.to_lowercase().contains(&q))
                        .unwrap_or(false)
         })
         .collect()
+}
+
+/// Set clipboard content: text or image (loaded from disk).
+fn set_clipboard_content(content: &ClipboardContent, image_dir: &std::path::Path) {
+    let display = match gdk4::Display::default() {
+        Some(d) => d,
+        None => return,
+    };
+    match content {
+        ClipboardContent::Text(t) => {
+            display.clipboard().set_text(t);
+        }
+        ClipboardContent::Image { hash, .. } => {
+            let hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
+            let full_path = image_dir.join(format!("{hex}.png"));
+            let gio_file = gdk4::gio::File::for_path(&full_path);
+            match gdk4::Texture::from_file(&gio_file) {
+                Ok(texture) => display.clipboard().set_texture(&texture),
+                Err(e) => tracing::warn!("[clipboard] failed to load image {hex}: {e}"),
+            }
+        }
+    }
+}
+
+/// Startup GC: delete image files in `image_dir` whose hash is not in the store.
+fn gc_image_files(image_dir: &std::path::Path, store: &Box<dyn Store>) {
+    use std::collections::HashSet;
+    let hashes: HashSet<String> = store.get_all().iter()
+        .filter_map(|e| {
+            if let ClipboardContent::Image { hash, .. } = &e.content {
+                Some(hash.iter().map(|b| format!("{b:02x}")).collect())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let rd = match std::fs::read_dir(image_dir) {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+    for entry in rd.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        // Derive base hash from filename: strip _thumb.png or .png suffix
+        let base = if let Some(s) = name.strip_suffix("_thumb.png") {
+            s
+        } else if let Some(s) = name.strip_suffix(".png") {
+            s
+        } else {
+            continue;
+        };
+        if !hashes.contains(base) {
+            tracing::debug!("[gc] removing orphaned image file: {name}");
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }

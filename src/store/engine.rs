@@ -1,10 +1,10 @@
 use std::io::Write;
 use std::path::PathBuf;
 
-use crate::clipboard::entry::ClipboardEntry;
+use crate::clipboard::entry::{ClipboardContent, ClipboardEntry};
 
 const MAGIC: &[u8; 8] = b"CLIPMGR1";
-const VERSION: u16 = 2;
+const VERSION: u16 = 3;
 const MAX_ENTRY_BYTES: u32 = 10 * 1024 * 1024; // 10 MB guard
 
 pub struct PersistenceEngine {
@@ -80,26 +80,58 @@ fn crc32(data: &[u8]) -> u32 {
     !crc
 }
 
-// ── Entry serialization (V2 format) ───────────────────────────────────────────
+// ── Entry serialization (V3 format) ───────────────────────────────────────────
 //
-// V2 entry layout:
-//   id(8) copied_at(8) pinned(1) pad(3) content_len(4) content(n)
-//   has_label(1) [label_len(4) label(n)]
-//   has_color(1) [color_len(4) color(n)]   ← new in v2
-//   crc32(4)
+// V3 text entry:
+//   type(1)=0 | id(8) | copied_at(8) | pinned(1) | pad(3) | content_len(4) | content(n)
+//   | has_label(1) | [label_len(4) | label(n)]
+//   | has_color(1) | [color_len(4) | color(n)]
+//   | crc32(4)   ← CRC covers from id(8) onward
+//
+// V3 image entry:
+//   type(1)=1 | id(8) | copied_at(8) | pinned(1) | pad(3) | hash(32) | width(4) | height(4)
+//   | has_label(1) | [label_len(4) | label(n)]
+//   | has_color(1) | [color_len(4) | color(n)]
+//   | crc32(4)   ← CRC covers from id(8) onward
 
 fn write_entry(w: &mut impl Write, e: &ClipboardEntry) -> anyhow::Result<()> {
-    let content = e.content.as_bytes();
-    let mut buf: Vec<u8> = Vec::with_capacity(32 + content.len());
+    match &e.content {
+        ClipboardContent::Text(text) => {
+            w.write_all(&[0u8])?; // type = 0 (text)
+            let content_bytes = text.as_bytes();
+            let mut buf: Vec<u8> = Vec::with_capacity(32 + content_bytes.len());
+            buf.extend_from_slice(&e.id.to_le_bytes());
+            buf.extend_from_slice(&e.copied_at.to_le_bytes());
+            buf.push(e.pinned as u8);
+            buf.extend_from_slice(&[0u8; 3]); // pad
+            buf.extend_from_slice(&(content_bytes.len() as u32).to_le_bytes());
+            buf.extend_from_slice(content_bytes);
+            write_label_color(&mut buf, &e.label, &e.color);
+            let checksum = crc32(&buf);
+            buf.extend_from_slice(&checksum.to_le_bytes());
+            w.write_all(&buf)?;
+        }
+        ClipboardContent::Image { hash, width, height } => {
+            w.write_all(&[1u8])?; // type = 1 (image)
+            let mut buf: Vec<u8> = Vec::with_capacity(64);
+            buf.extend_from_slice(&e.id.to_le_bytes());
+            buf.extend_from_slice(&e.copied_at.to_le_bytes());
+            buf.push(e.pinned as u8);
+            buf.extend_from_slice(&[0u8; 3]); // pad
+            buf.extend_from_slice(hash);       // 32 bytes
+            buf.extend_from_slice(&width.to_le_bytes());
+            buf.extend_from_slice(&height.to_le_bytes());
+            write_label_color(&mut buf, &e.label, &e.color);
+            let checksum = crc32(&buf);
+            buf.extend_from_slice(&checksum.to_le_bytes());
+            w.write_all(&buf)?;
+        }
+    }
+    Ok(())
+}
 
-    buf.extend_from_slice(&e.id.to_le_bytes());
-    buf.extend_from_slice(&e.copied_at.to_le_bytes());
-    buf.push(e.pinned as u8);
-    buf.extend_from_slice(&[0u8; 3]); // pad
-    buf.extend_from_slice(&(content.len() as u32).to_le_bytes());
-    buf.extend_from_slice(content);
-
-    match &e.label {
+fn write_label_color(buf: &mut Vec<u8>, label: &Option<String>, color: &Option<String>) {
+    match label {
         Some(lbl) => {
             let lb = lbl.as_bytes();
             buf.push(1u8);
@@ -108,8 +140,7 @@ fn write_entry(w: &mut impl Write, e: &ClipboardEntry) -> anyhow::Result<()> {
         }
         None => buf.push(0u8),
     }
-
-    match &e.color {
+    match color {
         Some(col) => {
             let cb = col.as_bytes();
             buf.push(1u8);
@@ -118,12 +149,6 @@ fn write_entry(w: &mut impl Write, e: &ClipboardEntry) -> anyhow::Result<()> {
         }
         None => buf.push(0u8),
     }
-
-    let checksum = crc32(&buf);
-    buf.extend_from_slice(&checksum.to_le_bytes());
-
-    w.write_all(&buf)?;
-    Ok(())
 }
 
 // ── File parsing ──────────────────────────────────────────────────────────────
@@ -138,7 +163,7 @@ fn parse_file(data: &[u8]) -> Vec<ClipboardEntry> {
         return vec![];
     }
     let version = u16::from_le_bytes([data[8], data[9]]);
-    if version != 1 && version != 2 {
+    if version != 1 && version != 2 && version != 3 {
         tracing::warn!("[persist] unsupported file version {version} — ignoring history file");
         return vec![];
     }
@@ -148,10 +173,10 @@ fn parse_file(data: &[u8]) -> Vec<ClipboardEntry> {
     let mut entries = Vec::with_capacity(count.min(1024));
 
     for i in 0..count {
-        let result = if version == 1 {
-            read_entry_v1(data, &mut pos)
-        } else {
-            read_entry_v2(data, &mut pos)
+        let result = match version {
+            1 => read_entry_v1(data, &mut pos),
+            2 => read_entry_v2(data, &mut pos),
+            _ => read_entry_v3(data, &mut pos),
         };
         match result {
             Some(e) => entries.push(e),
@@ -206,10 +231,10 @@ macro_rules! try_read_u64 {
 fn read_entry_v1(data: &[u8], pos: &mut usize) -> Option<ClipboardEntry> {
     let entry_start = *pos;
 
-    let id       = try_read_u64!(data, pos);
+    let id        = try_read_u64!(data, pos);
     let copied_at = try_read_u64!(data, pos);
-    let pinned   = try_read_u8!(data, pos) != 0;
-    let _        = try_read_bytes!(data, pos, 3); // pad
+    let pinned    = try_read_u8!(data, pos) != 0;
+    let _         = try_read_bytes!(data, pos, 3); // pad
 
     let content_len = try_read_u32!(data, pos);
     if content_len > MAX_ENTRY_BYTES {
@@ -217,7 +242,7 @@ fn read_entry_v1(data: &[u8], pos: &mut usize) -> Option<ClipboardEntry> {
         return None;
     }
     let content_bytes = try_read_bytes!(data, pos, content_len as usize);
-    let content = match std::str::from_utf8(content_bytes) {
+    let text = match std::str::from_utf8(content_bytes) {
         Ok(s) => s.to_string(),
         Err(_) => {
             tracing::warn!("[persist] invalid UTF-8 in content — skipping entry");
@@ -253,17 +278,24 @@ fn read_entry_v1(data: &[u8], pos: &mut usize) -> Option<ClipboardEntry> {
         return None;
     }
 
-    Some(ClipboardEntry { id, content, copied_at, pinned, label, color: None })
+    Some(ClipboardEntry {
+        id,
+        content: ClipboardContent::Text(text),
+        copied_at,
+        pinned,
+        label,
+        color: None,
+    })
 }
 
 /// Read a V2 entry (includes color field after label).
 fn read_entry_v2(data: &[u8], pos: &mut usize) -> Option<ClipboardEntry> {
     let entry_start = *pos;
 
-    let id       = try_read_u64!(data, pos);
+    let id        = try_read_u64!(data, pos);
     let copied_at = try_read_u64!(data, pos);
-    let pinned   = try_read_u8!(data, pos) != 0;
-    let _        = try_read_bytes!(data, pos, 3); // pad
+    let pinned    = try_read_u8!(data, pos) != 0;
+    let _         = try_read_bytes!(data, pos, 3); // pad
 
     let content_len = try_read_u32!(data, pos);
     if content_len > MAX_ENTRY_BYTES {
@@ -271,7 +303,7 @@ fn read_entry_v2(data: &[u8], pos: &mut usize) -> Option<ClipboardEntry> {
         return None;
     }
     let content_bytes = try_read_bytes!(data, pos, content_len as usize);
-    let content = match std::str::from_utf8(content_bytes) {
+    let text = match std::str::from_utf8(content_bytes) {
         Ok(s) => s.to_string(),
         Err(_) => {
             tracing::warn!("[persist] invalid UTF-8 in content — skipping entry");
@@ -279,6 +311,84 @@ fn read_entry_v2(data: &[u8], pos: &mut usize) -> Option<ClipboardEntry> {
         }
     };
 
+    let (label, color) = read_label_color(data, pos)?;
+
+    let expected = crc32(&data[entry_start..*pos]);
+    let stored   = try_read_u32!(data, pos);
+    if stored != expected {
+        tracing::warn!(
+            "[persist] CRC32 mismatch (expected {expected:#010x}, got {stored:#010x}) — skipping entry"
+        );
+        return None;
+    }
+
+    Some(ClipboardEntry {
+        id,
+        content: ClipboardContent::Text(text),
+        copied_at,
+        pinned,
+        label,
+        color,
+    })
+}
+
+/// Read a V3 entry: reads type byte first, then dispatches text or image layout.
+fn read_entry_v3(data: &[u8], pos: &mut usize) -> Option<ClipboardEntry> {
+    if *pos >= data.len() {
+        return None;
+    }
+    let entry_type = data[*pos];
+    *pos += 1;
+
+    let entry_start = *pos;
+
+    let id        = try_read_u64!(data, pos);
+    let copied_at = try_read_u64!(data, pos);
+    let pinned    = try_read_u8!(data, pos) != 0;
+    let _         = try_read_bytes!(data, pos, 3); // pad
+
+    let content = if entry_type == 0 {
+        // Text entry
+        let content_len = try_read_u32!(data, pos);
+        if content_len > MAX_ENTRY_BYTES {
+            tracing::warn!("[persist] entry content too large ({content_len} bytes) — skipping");
+            return None;
+        }
+        let content_bytes = try_read_bytes!(data, pos, content_len as usize);
+        let text = match std::str::from_utf8(content_bytes) {
+            Ok(s) => s.to_string(),
+            Err(_) => {
+                tracing::warn!("[persist] invalid UTF-8 in content — skipping entry");
+                return None;
+            }
+        };
+        ClipboardContent::Text(text)
+    } else {
+        // Image entry (type = 1)
+        let hash_bytes = try_read_bytes!(data, pos, 32);
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(hash_bytes);
+        let width  = try_read_u32!(data, pos);
+        let height = try_read_u32!(data, pos);
+        ClipboardContent::Image { hash, width, height }
+    };
+
+    let (label, color) = read_label_color(data, pos)?;
+
+    let expected = crc32(&data[entry_start..*pos]);
+    let stored   = try_read_u32!(data, pos);
+    if stored != expected {
+        tracing::warn!(
+            "[persist] CRC32 mismatch (expected {expected:#010x}, got {stored:#010x}) — skipping entry"
+        );
+        return None;
+    }
+
+    Some(ClipboardEntry { id, content, copied_at, pinned, label, color })
+}
+
+/// Read label + color fields (shared by V2 and V3).
+fn read_label_color(data: &[u8], pos: &mut usize) -> Option<(Option<String>, Option<String>)> {
     let has_label = try_read_u8!(data, pos);
     let label = if has_label == 1 {
         let label_len = try_read_u32!(data, pos);
@@ -317,14 +427,5 @@ fn read_entry_v2(data: &[u8], pos: &mut usize) -> Option<ClipboardEntry> {
         None
     };
 
-    let expected = crc32(&data[entry_start..*pos]);
-    let stored   = try_read_u32!(data, pos);
-    if stored != expected {
-        tracing::warn!(
-            "[persist] CRC32 mismatch (expected {expected:#010x}, got {stored:#010x}) — skipping entry"
-        );
-        return None;
-    }
-
-    Some(ClipboardEntry { id, content, copied_at, pinned, label, color })
+    Some((label, color))
 }
