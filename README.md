@@ -168,6 +168,29 @@ The `reload` command stops the running daemon and starts a fresh one in the back
 | `~/.local/share/clipboard-manager/history.bin` | Clipboard history (text, labels, colors, pins) |
 | `~/.local/share/clipboard-manager/images/` | Captured screenshots (full PNGs + 240×135 thumbnails) |
 
+## Upgrade
+
+Run the same install command you used originally — it always fetches the latest release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sheheemmulakkal/clipboard-manager/master/install.sh | bash
+```
+
+Or download the new `.deb` from the [Releases page](../../releases/latest) and install it directly:
+
+```bash
+sudo apt install ./clipboard-manager_*.deb
+```
+
+Both methods:
+- Stop the running instance automatically (via the package `prerm` script)
+- Install the new binary and restart the app
+- **Preserve** your history, config, and pinned items — nothing is deleted on upgrade
+- Automatically install any new system dependencies (e.g. `libgdk-pixbuf-2.0-0` added in v1.2.0)
+
+> Clipboard history is stored in a versioned binary format. Old history files
+> are loaded transparently and re-saved in the new format on first run.
+
 ## Uninstall
 ```bash
 sudo apt remove clipboard-manager
