@@ -41,6 +41,7 @@ jobs:
             libglib2.0-dev \
             libx11-dev \
             libxtst-dev \
+            libgdk-pixbuf-2.0-dev \
             pkg-config \
             build-essential
 
@@ -82,9 +83,12 @@ jobs:
             sudo apt install ./clipboard-manager_*.deb
             ```
 
+            ### Upgrade from an older version
+            Run the same install command above — it upgrades in-place and preserves your history and config.
+
             ### Requirements
-            - Ubuntu 20.04, 22.04, or 24.04 (amd64)
-            - X11 session — at login, select **"Ubuntu on Xorg"**
+            - Ubuntu 22.04 or newer (amd64)
+            - X11 or Wayland session
 
             ### What's new
             See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/master/CHANGELOG.md) for details.

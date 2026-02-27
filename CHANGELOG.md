@@ -4,6 +4,28 @@ All notable changes to Clipboard Manager will be documented here.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-02-27
+
+### Added
+- **Screenshot and image clipboard support** — copy a screenshot or image and
+  it appears in the popup as a thumbnail (240×135). Clicking pastes it back.
+- **File-based image storage** — full PNGs and thumbnails stored in
+  `~/.local/share/clipboard-manager/images/`. Zero RAM overhead per image;
+  only the SHA-256 hash and dimensions are kept in memory.
+- **Image deduplication** — copying the same screenshot twice adds only one entry.
+- **Startup GC** — orphaned image files (whose history entry was evicted) are
+  deleted automatically on the next launch.
+- **V3 binary format** — history.bin now supports both text and image entries
+  via a type-prefix byte. V1 and V2 files load transparently and are re-saved
+  as V3 on the next flush.
+
+### Changed
+- Ubuntu requirement updated to **22.04 or newer** (GTK4 baseline).
+- Terminal-paste button is hidden for image rows (terminals can't accept binary clipboard data).
+- `libgdk-pixbuf-2.0-0` added as a runtime dependency for thumbnail generation.
+
+## [1.1.0] - 2026-02-26
+
 ### Added
 - **Item labels and colors** — right-click any row to open a label editor.
   Set a short title and/or pick one of 8 Catppuccin Mocha accent colors.
