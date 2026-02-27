@@ -26,6 +26,7 @@ struct UndoPending {
 
 pub struct ClipboardPopup {
     window:              Window,
+    scrolled:            ScrolledWindow,
     list_box:            ListBox,
     row_data:            Rc<RefCell<Vec<(u64, ClipboardContent, bool)>>>,
     on_select:           Rc<RefCell<Option<Rc<dyn Fn(u64, ClipboardContent)>>>>,
@@ -367,7 +368,7 @@ impl ClipboardPopup {
         }
 
         Self {
-            window, list_box, row_data,
+            window, scrolled, list_box, row_data,
             on_select, on_copy, on_terminal_paste, on_remove, on_pin, on_label, on_clear,
             undo_bar, undo_label, undo_pending, undo_tick,
             platform, nerd_font, search_entry, suppress_close,
@@ -390,6 +391,15 @@ impl ClipboardPopup {
         cancel_tick(&self.undo_tick);
         *self.undo_pending.borrow_mut() = None;
         self.undo_bar.set_visible(false);
+
+        // If the popup is already visible this is a mutation repopulate (delete/pin/label).
+        // Save the scroll position so we can restore it after rebuilding the list.
+        let is_repopulate = self.window.is_visible();
+        let saved_scroll = if is_repopulate {
+            self.scrolled.vadjustment().value()
+        } else {
+            0.0
+        };
 
         while let Some(child) = self.list_box.first_child() {
             self.list_box.remove(&child);
@@ -454,8 +464,15 @@ impl ClipboardPopup {
             row.set_selectable(false);
             row.set_child(Some(&label));
             self.list_box.append(&row);
-        } else if let Some(first) = self.list_box.row_at_index(0) {
-            self.list_box.select_row(Some(&first));
+        } else if is_repopulate {
+            // Restore scroll position — keeps the user's view stable after
+            // a delete, pin toggle, or label change.
+            self.scrolled.vadjustment().set_value(saved_scroll);
+        } else {
+            // Fresh open: select row 0 so keyboard navigation works immediately.
+            if let Some(first) = self.list_box.row_at_index(0) {
+                self.list_box.select_row(Some(&first));
+            }
         }
     }
 
