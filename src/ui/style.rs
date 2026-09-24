@@ -185,14 +185,13 @@ list.history > row:focus-visible {{
     box-shadow: inset 0 0 0 1px alpha({accent}, 0.5);
     border-radius: 12px;
 }}
-list.history > row.pinned {{
-    border: 1.5px solid {accent};
-    border-radius: 12px;
-    background-color: alpha({accent}, 0.06);
-    margin: 2px 0;
-}}
-list.history > row.pinned:selected {{
-    background-color: alpha({accent}, 0.14);
+/* Pinned rows are grouped under a "PINNED" header instead of being framed. */
+.section-header {{
+    color: {text_muted};
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    padding: 12px 8px 4px 8px;
 }}
 
 .item-row {{
@@ -420,7 +419,7 @@ popover.cm-editor entry:focus-within {{
     css.push_str(&format!(".dot-none {{ background-color: alpha({text_muted}, 0.6); }}\n"));
 
     // Rows with an explicit colour: left bar, faint tint, tinted icon tile.
-    // (Pinned rows keep their accent border; the tint shows inside it.)
+    // (Pinned rows are marked by the section header, so tints never clash.)
     for (name, hex) in COLORS {
         css.push_str(&format!(
             "list.history > row.tint-{name} {{ background-color: alpha({hex}, 0.08); \

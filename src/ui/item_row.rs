@@ -223,7 +223,7 @@ pub fn build_item_row(
 
     // ── Pin ─────────────────────────────────────────────────────────────
     let pin_btn = if entry.pinned {
-        row_button(Icon::PinFilled, &theme.accent_icon(), "Unpin")
+        row_button(Icon::PinFilled, &theme.icon, "Unpin")
     } else {
         row_button(Icon::Pin, &theme.icon_muted, "Pin")
     };

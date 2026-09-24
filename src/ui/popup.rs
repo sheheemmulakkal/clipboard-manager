@@ -98,6 +98,8 @@ pub struct ClipboardPopup {
     /// Entry id and keyboard hooks of each list row, by row index.
     row_ids:             Rc<RefCell<Vec<u64>>>,
     row_hooks:           Rc<RefCell<Vec<RowHooks>>>,
+    /// Pinned flag of each row (for the section headers).
+    row_pinned:          Rc<RefCell<Vec<bool>>>,
     /// The user explicitly focused the search (digits are text, not paste).
     search_armed:        Rc<Cell<bool>>,
     handler:             EventHandler,
@@ -322,6 +324,22 @@ impl ClipboardPopup {
         let row_ids:      Rc<RefCell<Vec<u64>>>               = Rc::new(RefCell::new(vec![]));
         let row_hooks:    Rc<RefCell<Vec<RowHooks>>>          = Rc::new(RefCell::new(vec![]));
         let search_armed: Rc<Cell<bool>>                      = Rc::new(Cell::new(false));
+        let row_pinned:   Rc<RefCell<Vec<bool>>>              = Rc::new(RefCell::new(vec![]));
+        {
+            let pinned = Rc::clone(&row_pinned);
+            list_box.set_header_func(move |row, _before| {
+                let header = section_header(&pinned.borrow(), row.index().max(0) as usize);
+                match header {
+                    Some(text) => {
+                        let label = Label::new(Some(&text.to_uppercase()));
+                        label.add_css_class("section-header");
+                        label.set_xalign(0.0);
+                        row.set_header(Some(&label));
+                    }
+                    None => row.set_header(gtk4::Widget::NONE),
+                }
+            });
+        }
         let undo_pending: Rc<RefCell<Option<UndoPending>>>    = Rc::new(RefCell::new(None));
         let undo_tick:    Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
 
@@ -658,7 +676,7 @@ impl ClipboardPopup {
         }
 
         Self {
-            window, scrolled, list_box, row_ids, row_hooks, search_armed, handler,
+            window, scrolled, list_box, row_ids, row_hooks, row_pinned, search_armed, handler,
             undo_bar, undo_label, undo_pending, undo_tick,
             platform, theme, show_timestamps: config.show_timestamps,
             search_entry, suppress_close, size,
@@ -706,6 +724,7 @@ impl ClipboardPopup {
             screen_sizes:    Rc::clone(&self.screen_sizes),
             tags:            Rc::new(tags),
         };
+        *self.row_pinned.borrow_mut() = entries.iter().map(|e| e.pinned).collect();
         for (index, entry) in entries.iter().enumerate() {
             ids.push(entry.id);
             let id = entry.id;
@@ -1068,6 +1087,19 @@ fn do_close(
     if let Some(s) = state { (s.on_commit)(); }
 }
 
+/// Section header above row `index`: "Pinned" before the first pinned row,
+/// "Recent" before the first unpinned row after pinned ones. No headers when
+/// nothing is pinned.
+fn section_header(pinned: &[bool], index: usize) -> Option<&'static str> {
+    let this = *pinned.get(index)?;
+    let prev = index.checked_sub(1).and_then(|i| pinned.get(i)).copied();
+    match (this, prev) {
+        (true, None) => Some("Pinned"),
+        (false, Some(true)) => Some("Recent"),
+        _ => None,
+    }
+}
+
 /// Row to select after the list was rebuilt: the same position, clamped.
 fn restored_selection(previous: Option<usize>, len: usize) -> Option<usize> {
     previous.filter(|_| len > 0).map(|i| i.min(len - 1))
@@ -1339,6 +1371,23 @@ mod tests {
         assert_eq!(calls.get(), 1);
         guard.release(); // extra release: no underflow, no extra call
         assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn section_headers_only_when_something_is_pinned() {
+        // pinned flags of the visible rows, in order
+        let pinned = [true, true, false, false];
+        let h = |i: usize| section_header(&pinned, i);
+        assert_eq!(h(0), Some("Pinned"));
+        assert_eq!(h(1), None);
+        assert_eq!(h(2), Some("Recent"));
+        assert_eq!(h(3), None);
+        // nothing pinned: no headers at all
+        assert_eq!(section_header(&[false, false], 0), None);
+        // only pinned rows (e.g. the Pinned chip): just the first header
+        assert_eq!(section_header(&[true, true], 0), Some("Pinned"));
+        assert_eq!(section_header(&[true, true], 1), None);
+        assert_eq!(section_header(&[], 0), None);
     }
 
     #[test]
