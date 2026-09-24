@@ -17,6 +17,7 @@ impl Default for ClipboardContent {
 pub struct EntryMeta {
     pub label: Option<String>,
     pub color: Option<String>,
+    pub tag:   Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -27,6 +28,7 @@ pub struct ClipboardEntry {
     pub pinned:     bool,
     pub label:      Option<String>,
     pub color:      Option<String>,
+    pub tag:        Option<String>,
 }
 
 impl ClipboardEntry {
@@ -38,6 +40,7 @@ impl ClipboardEntry {
             pinned: false,
             label: None,
             color: None,
+            tag: None,
         }
     }
 
@@ -49,6 +52,7 @@ impl ClipboardEntry {
             pinned: false,
             label: None,
             color: None,
+            tag: None,
         }
     }
 

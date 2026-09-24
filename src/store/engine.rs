@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use crate::clipboard::entry::{ClipboardContent, ClipboardEntry};
 
 const MAGIC: &[u8; 8] = b"CLIPMGR1";
-const VERSION: u16 = 3;
+const VERSION: u16 = 4;
 const MAX_ENTRY_BYTES: u32 = 10 * 1024 * 1024; // 10 MB guard
 
 pub struct PersistenceEngine {
@@ -103,7 +103,9 @@ fn crc32(data: &[u8]) -> u32 {
     !crc
 }
 
-// ── Entry serialization (V3 format) ───────────────────────────────────────────
+// ── Entry serialization (V4 format) ───────────────────────────────────────────
+//
+// V4 = V3 + `| has_tag(1) | [tag_len(4) | tag(n)]` after the color, before the CRC.
 //
 // V3 text entry:
 //   type(1)=0 | id(8) | copied_at(8) | pinned(1) | pad(3) | content_len(4) | content(n)
@@ -130,6 +132,7 @@ fn write_entry(w: &mut impl Write, e: &ClipboardEntry) -> anyhow::Result<()> {
             buf.extend_from_slice(&(content_bytes.len() as u32).to_le_bytes());
             buf.extend_from_slice(content_bytes);
             write_label_color(&mut buf, &e.label, &e.color);
+            write_opt_string(&mut buf, &e.tag);
             let checksum = crc32(&buf);
             buf.extend_from_slice(&checksum.to_le_bytes());
             w.write_all(&buf)?;
@@ -145,6 +148,7 @@ fn write_entry(w: &mut impl Write, e: &ClipboardEntry) -> anyhow::Result<()> {
             buf.extend_from_slice(&width.to_le_bytes());
             buf.extend_from_slice(&height.to_le_bytes());
             write_label_color(&mut buf, &e.label, &e.color);
+            write_opt_string(&mut buf, &e.tag);
             let checksum = crc32(&buf);
             buf.extend_from_slice(&checksum.to_le_bytes());
             w.write_all(&buf)?;
@@ -154,21 +158,16 @@ fn write_entry(w: &mut impl Write, e: &ClipboardEntry) -> anyhow::Result<()> {
 }
 
 fn write_label_color(buf: &mut Vec<u8>, label: &Option<String>, color: &Option<String>) {
-    match label {
-        Some(lbl) => {
-            let lb = lbl.as_bytes();
+    write_opt_string(buf, label);
+    write_opt_string(buf, color);
+}
+
+fn write_opt_string(buf: &mut Vec<u8>, value: &Option<String>) {
+    match value {
+        Some(v) => {
             buf.push(1u8);
-            buf.extend_from_slice(&(lb.len() as u32).to_le_bytes());
-            buf.extend_from_slice(lb);
-        }
-        None => buf.push(0u8),
-    }
-    match color {
-        Some(col) => {
-            let cb = col.as_bytes();
-            buf.push(1u8);
-            buf.extend_from_slice(&(cb.len() as u32).to_le_bytes());
-            buf.extend_from_slice(cb);
+            buf.extend_from_slice(&(v.len() as u32).to_le_bytes());
+            buf.extend_from_slice(v.as_bytes());
         }
         None => buf.push(0u8),
     }
@@ -207,7 +206,7 @@ fn parse_file(data: &[u8]) -> Vec<ClipboardEntry> {
         let result = match version {
             1 => read_entry_v1(data, &mut pos),
             2 => read_entry_v2(data, &mut pos),
-            _ => read_entry_v3(data, &mut pos),
+            v => read_entry_v3(data, &mut pos, v >= 4),
         };
         match result {
             Some(ReadOutcome::Entry(e)) => entries.push(e),
@@ -332,6 +331,7 @@ fn read_entry_v1(data: &[u8], pos: &mut usize) -> Option<ReadOutcome> {
         pinned,
         label,
         color: None,
+        tag: None,
     }))
 }
 
@@ -357,11 +357,13 @@ fn read_entry_v2(data: &[u8], pos: &mut usize) -> Option<ReadOutcome> {
         pinned,
         label,
         color,
+        tag: None,
     }))
 }
 
-/// Read a V3 entry: reads type byte first, then dispatches text or image layout.
-fn read_entry_v3(data: &[u8], pos: &mut usize) -> Option<ReadOutcome> {
+/// Read a V3/V4 entry: reads type byte first, then dispatches text or image
+/// layout. `with_tag` = V4 (tag field after the color).
+fn read_entry_v3(data: &[u8], pos: &mut usize, with_tag: bool) -> Option<ReadOutcome> {
     let entry_type = try_read_u8!(data, pos);
     let entry_start = *pos;
 
@@ -384,10 +386,11 @@ fn read_entry_v3(data: &[u8], pos: &mut usize) -> Option<ReadOutcome> {
 
     let label = read_opt_string(data, pos, "label")?;
     let color = read_opt_string(data, pos, "color")?;
+    let tag   = if with_tag { read_opt_string(data, pos, "tag")? } else { None };
     check_crc(data, entry_start, pos)?;
 
     let Some(content) = content else { return Some(ReadOutcome::Skipped) };
-    Some(ReadOutcome::Entry(ClipboardEntry { id, content, copied_at, pinned, label, color }))
+    Some(ReadOutcome::Entry(ClipboardEntry { id, content, copied_at, pinned, label, color, tag }))
 }
 
 #[cfg(test)]
@@ -455,6 +458,69 @@ mod tests {
         assert_eq!(got.len(), 2);
         assert_eq!(got[0].label.as_deref(), Some("lbl"));
         assert_eq!(got[1].color.as_deref(), Some("blue"));
+    }
+
+    #[test]
+    fn roundtrip_tag() {
+        let p = tmp("tag");
+        let mut a = text(1, "hello");
+        a.tag = Some("Work".into());
+        let mut b = ClipboardEntry::new_image(2, [3u8; 32], 5, 6);
+        b.tag = Some("Ideas".into());
+        let e = PersistenceEngine::new(p);
+        e.flush(&[&a, &b, &text(3, "none")]).unwrap();
+        let got = e.load();
+        assert_eq!(got.len(), 3);
+        assert_eq!(got[0].tag.as_deref(), Some("Work"));
+        assert_eq!(got[1].tag.as_deref(), Some("Ideas"));
+        assert_eq!(got[2].tag, None);
+    }
+
+    #[test]
+    fn v3_file_still_loads() {
+        // V3: type byte, then id/copied_at/pinned/pad, body, label, color, crc.
+        let mut out = Vec::new();
+        out.extend_from_slice(MAGIC);
+        out.extend_from_slice(&3u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&2u32.to_le_bytes());
+        out.extend_from_slice(&[0u8; 6]);
+        // text entry
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&1u64.to_le_bytes());
+        buf.extend_from_slice(&1000u64.to_le_bytes());
+        buf.push(0);
+        buf.extend_from_slice(&[0u8; 3]);
+        buf.extend_from_slice(&2u32.to_le_bytes());
+        buf.extend_from_slice(b"hi");
+        write_label_color(&mut buf, &Some("L".into()), &Some("red".into()));
+        let c = crc32(&buf);
+        buf.extend_from_slice(&c.to_le_bytes());
+        out.push(0);
+        out.extend_from_slice(&buf);
+        // image entry
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&2u64.to_le_bytes());
+        buf.extend_from_slice(&1001u64.to_le_bytes());
+        buf.push(1);
+        buf.extend_from_slice(&[0u8; 3]);
+        buf.extend_from_slice(&[4u8; 32]);
+        buf.extend_from_slice(&7u32.to_le_bytes());
+        buf.extend_from_slice(&8u32.to_le_bytes());
+        write_label_color(&mut buf, &None, &None);
+        let c = crc32(&buf);
+        buf.extend_from_slice(&c.to_le_bytes());
+        out.push(1);
+        out.extend_from_slice(&buf);
+
+        let p = tmp("v3");
+        std::fs::write(&p, out).unwrap();
+        let got = PersistenceEngine::new(p).load();
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].label.as_deref(), Some("L"));
+        assert_eq!(got[0].tag, None);
+        assert!(got[1].pinned);
+        assert!(matches!(got[1].content, ClipboardContent::Image { width: 7, height: 8, .. }));
     }
 
     #[test]

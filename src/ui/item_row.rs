@@ -174,6 +174,7 @@ pub fn build_item_row(
     let id = entry.id;
     let entry_label = entry.label.clone();
     let entry_color = entry.color.clone();
+    let entry_tag   = entry.tag.clone();
 
     // Click on row body → Select (copy + paste) — button 1 only
     let cb_select = Rc::clone(&on_action);
@@ -221,6 +222,7 @@ pub fn build_item_row(
                 &row_c,
                 entry_label.clone(),
                 entry_color.clone(),
+                entry_tag.clone(),
                 Rc::clone(&cb_lbl),
                 Rc::clone(&sc_c),
             );
@@ -243,6 +245,7 @@ fn build_label_popover(
     row:            &ListBoxRow,
     entry_label:    Option<String>,
     entry_color:    Option<String>,
+    entry_tag:      Option<String>,
     cb:             Rc<dyn Fn(RowAction)>,
     suppress_close: Rc<Cell<u32>>,
 ) {
@@ -382,12 +385,13 @@ fn build_label_popover(
         let title_entry_c  = title_entry.clone();
         let sc_c           = Rc::clone(&selected_color);
         let suppress_c     = Rc::clone(&suppress_close);
+        let entry_tag_c    = entry_tag;
         popover.connect_closed(move |_| {
             if committed_c.get() {
                 let text  = title_entry_c.text().to_string();
                 let label = if text.is_empty() { None } else { Some(text) };
                 let color = sc_c.borrow().clone();
-                cb(RowAction::SetMeta(EntryMeta { label, color }));
+                cb(RowAction::SetMeta(EntryMeta { label, color, tag: entry_tag_c.clone() }));
             }
             committed_c.set(false);
 

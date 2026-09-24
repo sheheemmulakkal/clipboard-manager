@@ -73,6 +73,7 @@ impl Store for MemoryStore {
         if let Some(e) = self.entries.iter_mut().find(|e| e.id == id) {
             e.label = meta.label;
             e.color = meta.color;
+            e.tag   = meta.tag;
         }
     }
 
