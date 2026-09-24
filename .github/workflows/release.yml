@@ -42,6 +42,7 @@ jobs:
             libx11-dev \
             libxtst-dev \
             libgdk-pixbuf-2.0-dev \
+            librsvg2-common \
             pkg-config \
             build-essential
 
