@@ -124,7 +124,7 @@ impl App {
 
             // ── Clipboard monitor ─────────────────────────────────────────
             let store_for_cb = Rc::clone(&store);
-            let _monitor = ClipboardMonitor::start(Rc::clone(&store), &config, paused, move || {
+            let _monitor = ClipboardMonitor::start(Rc::clone(&store), &config, Arc::clone(&platform), paused, move || {
                 tracing::debug!("[monitor] store now has {} item(s)", store_for_cb.borrow().len());
             });
 

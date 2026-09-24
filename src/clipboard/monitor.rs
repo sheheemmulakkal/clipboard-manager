@@ -1,11 +1,13 @@
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use gdk4::prelude::*;
 
 use crate::clipboard::entry::ClipboardEntry;
 use crate::config::AppConfig;
+use crate::platform::Platform;
 use crate::store::Store;
 
 const MAX_RAW_PIXELS: u64 = 3840 * 2160 * 4; // 4K cap (~33 MB raw)
@@ -24,8 +26,24 @@ struct State {
     last_image_hash: RefCell<Option<[u8; 32]>>,
     image_dir:       PathBuf,
     max_text_bytes:  usize,
+    ignore_apps:     Vec<String>,
+    platform:        Arc<dyn Platform>,
     paused:          Rc<Cell<bool>>,
     on_change:       Box<dyn Fn()>,
+}
+
+/// Clipboard owners such as KeePassXC and KWallet add this MIME type to
+/// mark the content as a password.
+const PASSWORD_HINT_MIME: &str = "x-kde-passwordManagerHint";
+
+fn is_secret_offer(mime_types: &[&str]) -> bool {
+    mime_types.contains(&PASSWORD_HINT_MIME)
+}
+
+/// Whether the focused window (`classes` = its WM_CLASS instance and class)
+/// is one of the user's ignored apps.
+fn is_ignored_app(classes: &[String], ignored: &[String]) -> bool {
+    classes.iter().any(|c| ignored.iter().any(|i| i.eq_ignore_ascii_case(c)))
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -50,6 +68,7 @@ impl ClipboardMonitor {
     pub fn start(
         store:     Rc<RefCell<Box<dyn Store>>>,
         config:    &AppConfig,
+        platform:  Arc<dyn Platform>,
         paused:    Rc<Cell<bool>>,
         on_change: impl Fn() + 'static,
     ) -> Self {
@@ -59,6 +78,8 @@ impl ClipboardMonitor {
             last_image_hash: RefCell::new(None),
             image_dir:       crate::paths::image_dir(),
             max_text_bytes:  config.max_text_bytes,
+            ignore_apps:     config.ignore_apps.clone(),
+            platform,
             paused,
             on_change:       Box::new(on_change),
         });
@@ -95,6 +116,22 @@ fn on_clipboard_changed(clipboard: &gdk4::Clipboard, state: &Rc<State>) {
     }
 
     let formats = clipboard.formats();
+    let mime_types: Vec<glib::GString> = formats.mime_types().iter().cloned().collect();
+    let mime_refs: Vec<&str> = mime_types.iter().map(|m| m.as_str()).collect();
+    let raw_targets = state.platform.clipboard_targets().unwrap_or_default();
+    let raw_refs: Vec<&str> = raw_targets.iter().map(String::as_str).collect();
+    if is_secret_offer(&mime_refs) || is_secret_offer(&raw_refs) {
+        tracing::debug!("[monitor] password-manager content — not recorded");
+        return;
+    }
+    if !state.ignore_apps.is_empty() {
+        if let Some(classes) = state.platform.active_window_class() {
+            if is_ignored_app(&classes, &state.ignore_apps) {
+                tracing::debug!("[monitor] copied in ignored app {classes:?} — not recorded");
+                return;
+            }
+        }
+    }
     let has_image = formats.contain_mime_type("image/png")
         || formats.contain_mime_type("image/jpeg")
         || formats.contain_mime_type("image/gif");
@@ -229,6 +266,23 @@ fn capture_image(state: &State, texture: &gdk4::Texture) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn password_manager_hint_marks_secret() {
+        assert!(is_secret_offer(&["text/plain", "x-kde-passwordManagerHint"]));
+        assert!(!is_secret_offer(&["text/plain", "UTF8_STRING"]));
+    }
+
+    #[test]
+    fn ignored_apps_match_instance_or_class_case_insensitively() {
+        let list = vec!["keepassxc".to_string(), "1Password".to_string()];
+        let win = |a: &str, b: &str| vec![a.to_string(), b.to_string()];
+        assert!(is_ignored_app(&win("keepassxc", "KeePassXC"), &list));
+        assert!(is_ignored_app(&win("1password", "1Password"), &list));
+        assert!(!is_ignored_app(&win("firefox", "Firefox"), &list));
+        assert!(!is_ignored_app(&[], &list));
+        assert!(!is_ignored_app(&win("keepassxc", "KeePassXC"), &[]));
+    }
 
     #[test]
     fn text_capture_rules() {
