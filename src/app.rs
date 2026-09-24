@@ -116,6 +116,7 @@ impl App {
                     .iter()
                     .map(|a| a.to_string_lossy().into_owned())
                     .collect();
+                tracing::debug!("[cli] remote command line: {:?}", &args[1..]);
                 let controller = slot.borrow().clone();
                 // (Output can't be printed into the caller's terminal before
                 // glib 2.80, so remote commands report via the exit code.)

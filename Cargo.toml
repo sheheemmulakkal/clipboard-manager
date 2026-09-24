@@ -19,7 +19,7 @@ chrono = "0.4"
 ksni = { version = "0.3", features = ["blocking"] }
 dirs = "5"
 ashpd = "0.9"
-tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time"] }
 futures-util = "0.3"
 evdev = "0.12"
 sha2 = { version = "0.10", optional = true }

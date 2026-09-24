@@ -129,7 +129,7 @@ impl Platform for X11Platform {
 
 /// Ask the CLIPBOARD owner for its TARGETS list. Waits at most 200 ms for an
 /// answer so a hung owner can't stall the caller.
-fn clipboard_targets_x11() -> Result<Vec<String>> {
+pub(crate) fn clipboard_targets_x11() -> Result<Vec<String>> {
     use x11rb::protocol::xproto::{CreateWindowAux, WindowClass};
     use x11rb::protocol::Event;
     use x11rb::CURRENT_TIME;

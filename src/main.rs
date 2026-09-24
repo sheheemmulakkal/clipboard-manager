@@ -47,22 +47,18 @@ fn main() {
         _ => {}
     }
 
-    // ── Wayland guard (user-facing error, shown before daemonizing) ──────────
-    if std::env::var("WAYLAND_DISPLAY").is_ok()
-        && std::env::var("GDK_BACKEND").as_deref() != Ok("x11")
-    {
-        eprintln!("╔══════════════════════════════════════════════════════════════════╗");
-        eprintln!("║        Clipboard Manager requires an X11 session.               ║");
-        eprintln!("╠══════════════════════════════════════════════════════════════════╣");
-        eprintln!("║  Wayland is detected but is not fully supported.                ║");
-        eprintln!("║                                                                  ║");
-        eprintln!("║  To use Clipboard Manager, log out and at the login screen      ║");
-        eprintln!("║  click the gear ⚙  icon and select  \"Ubuntu on Xorg\".          ║");
-        eprintln!("║                                                                  ║");
-        eprintln!("║  Advanced: to force X11 mode under Wayland (XWayland):          ║");
-        eprintln!("║    GDK_BACKEND=x11 clipboard-manager                            ║");
-        eprintln!("╚══════════════════════════════════════════════════════════════════╝");
-        std::process::exit(1);
+    // ── Wayland: run the UI on XWayland ──────────────────────────────────────
+    // Native Wayland clients can only read the clipboard while focused; an
+    // XWayland client can watch it in the background (the compositor
+    // mirrors the clipboard to X11), and can place its own window.
+    let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
+    let xwayland = std::env::var_os("DISPLAY").is_some();
+    let chosen = std::env::var("GDK_BACKEND").ok();
+    if let Some(backend) = gdk_backend_for(wayland, xwayland, chosen.as_deref()) {
+        // Single-threaded here: nothing else reads the environment yet.
+        std::env::set_var("GDK_BACKEND", backend);
+    } else if wayland && !xwayland {
+        eprintln!("clipboard-manager: no XWayland — clipboard history only records while the popup is focused");
     }
 
     // ── Auto-daemonize (detach from terminal) ────────────────────────────────
@@ -72,6 +68,12 @@ fn main() {
         eprintln!("Error: {:#}", e);
         std::process::exit(1);
     }
+}
+
+/// GDK backend to force: XWayland on Wayland sessions where it is available,
+/// unless the user chose a backend.
+fn gdk_backend_for(wayland: bool, xwayland: bool, chosen: Option<&str>) -> Option<&'static str> {
+    (wayland && xwayland && chosen.is_none()).then_some("x11")
 }
 
 /// Forward a command to the running instance over D-Bus and return the exit
@@ -206,4 +208,17 @@ fn spawn_daemon(exe: &std::path::Path, show_popup: bool) -> std::io::Result<std:
         .stdout(Stdio::null())
         .stderr(stderr)
         .spawn()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wayland_sessions_use_xwayland_when_available() {
+        assert_eq!(gdk_backend_for(true, true, None), Some("x11"));
+        assert_eq!(gdk_backend_for(true, false, None), None); // no XWayland: native
+        assert_eq!(gdk_backend_for(true, true, Some("wayland")), None); // user's choice wins
+        assert_eq!(gdk_backend_for(false, true, None), None); // X11 session
+    }
 }
