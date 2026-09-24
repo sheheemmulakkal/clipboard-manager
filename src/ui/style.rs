@@ -283,6 +283,10 @@ popover.cm-editor > contents {{
 .menu-item:hover, .menu-item:focus-visible {{
     background-color: {surface_hover};
 }}
+.menu-item:focus-visible {{
+    outline: 1px solid alpha({accent}, 0.6);
+    outline-offset: -1px;
+}}
 .menu-label {{
     color: {text};
     font-size: 13.5px;

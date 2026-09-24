@@ -80,6 +80,11 @@ impl Theme {
         if self.accent.starts_with('#') { self.accent.clone() } else { "#3584e4".into() }
     }
 
+    /// Danger colour as a concrete hex colour (for SVG icons).
+    pub fn danger_icon(&self) -> String {
+        if self.danger.starts_with('#') { self.danger.clone() } else { "#e01b24".into() }
+    }
+
     /// Use the GTK theme's actual foreground colour for icons ("system" theme).
     pub fn adopt_foreground(&mut self, hex: &str) {
         self.icon = hex.to_string();

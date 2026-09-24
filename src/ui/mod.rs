@@ -1,3 +1,4 @@
+pub mod context_menu;
 pub mod filter;
 pub mod format;
 pub mod icons;

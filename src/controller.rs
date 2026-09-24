@@ -91,8 +91,11 @@ impl Controller {
         } else {
             "No matches"
         };
+        let mut tags: Vec<String> = all.iter().filter_map(|e| e.tag.clone()).collect();
+        tags.sort_by_key(|t| t.to_lowercase());
+        tags.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
         let entries = filter::visible(all, &query);
-        self.popup.populate(&entries, empty_text);
+        self.popup.populate(&entries, empty_text, tags);
     }
 
     fn show(&self, prev_window: Option<u64>) {

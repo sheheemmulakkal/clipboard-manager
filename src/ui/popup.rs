@@ -52,8 +52,9 @@ pub struct ClipboardPopup {
     window:              Window,
     scrolled:            ScrolledWindow,
     list_box:            ListBox,
-    /// Entry id of each list row, by row index.
+    /// Entry id and context-menu opener of each list row, by row index.
     row_ids:             Rc<RefCell<Vec<u64>>>,
+    row_menus:           Rc<RefCell<Vec<Rc<dyn Fn()>>>>,
     handler:             EventHandler,
     undo_bar:            gtk4::Box,
     undo_label:          Label,
@@ -253,6 +254,7 @@ impl ClipboardPopup {
 
         // ── Shared state ──────────────────────────────────────────────────────
         let row_ids:      Rc<RefCell<Vec<u64>>>               = Rc::new(RefCell::new(vec![]));
+        let row_menus:    Rc<RefCell<Vec<Rc<dyn Fn()>>>>      = Rc::new(RefCell::new(vec![]));
         let undo_pending: Rc<RefCell<Option<UndoPending>>>    = Rc::new(RefCell::new(None));
         let undo_tick:    Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
 
@@ -324,14 +326,37 @@ impl ClipboardPopup {
             let win_ref = window.clone();
             let lb      = list_box.clone();
             let ids     = Rc::clone(&row_ids);
+            let menus   = Rc::clone(&row_menus);
             let h       = handler.clone();
             let se      = search_entry.clone();
 
             key_ctrl.connect_key_pressed(move |_, key, _, mods| {
                 use glib::Propagation;
-                let ctrl = mods.contains(gdk4::ModifierType::CONTROL_MASK);
+                let ctrl  = mods.contains(gdk4::ModifierType::CONTROL_MASK);
+                let shift = mods.contains(gdk4::ModifierType::SHIFT_MASK);
                 let in_search = has_focus_within(&se);
+                let selected = || lb.selected_row().map(|r| r.index() as usize);
+                let selected_id = || selected().and_then(|i| ids.borrow().get(i).copied());
+                let row_action = |a: RowAction| {
+                    if let Some(id) = selected_id() {
+                        h.emit(PopupEvent::Row(id, a));
+                    }
+                    Propagation::Stop
+                };
                 match key {
+                    // Shortcuts on the selected row (not while typing a query).
+                    k if k == gdk4::Key::Delete && !in_search => row_action(RowAction::Remove),
+                    k if ctrl && k == gdk4::Key::p => row_action(RowAction::TogglePin),
+                    k if ctrl && k == gdk4::Key::c && !(in_search && se.selection_bounds().is_some()) => {
+                        row_action(RowAction::Copy)
+                    }
+                    k if k == gdk4::Key::Menu || (shift && k == gdk4::Key::F10) => {
+                        let open = selected().and_then(|i| menus.borrow().get(i).cloned());
+                        if let Some(open) = open {
+                            open();
+                        }
+                        Propagation::Stop
+                    }
                     k if k == gdk4::Key::Escape => {
                         if !se.text().is_empty() {
                             se.set_text("");
@@ -484,7 +509,7 @@ impl ClipboardPopup {
         }
 
         Self {
-            window, scrolled, list_box, row_ids, handler,
+            window, scrolled, list_box, row_ids, row_menus, handler,
             undo_bar, undo_label, undo_pending, undo_tick,
             platform, theme, show_timestamps: config.show_timestamps,
             search_entry, suppress_close, size,
@@ -500,7 +525,7 @@ impl ClipboardPopup {
     // ── populate ──────────────────────────────────────────────────────────────
 
     /// Rebuild the list. `empty_text` is shown when `entries` is empty.
-    pub fn populate(&self, entries: &[ClipboardEntry], empty_text: &str) {
+    pub fn populate(&self, entries: &[ClipboardEntry], empty_text: &str, tags: Vec<String>) {
         // If the popup is already visible this is a mutation repopulate (delete/pin/label).
         // Save the scroll position so we can restore it after rebuilding the list.
         let is_repopulate = self.window.is_visible();
@@ -509,13 +534,17 @@ impl ClipboardPopup {
         } else {
             0.0
         };
+        let saved_selection = self.list_box.selected_row().map(|r| r.index() as usize);
+        let list_had_focus = has_focus_within(&self.list_box);
 
         while let Some(child) = self.list_box.first_child() {
             self.list_box.remove(&child);
         }
 
         let mut ids = self.row_ids.borrow_mut();
+        let mut menus = self.row_menus.borrow_mut();
         ids.clear();
+        menus.clear();
 
         let ctx = RowContext {
             theme:           Rc::clone(&self.theme),
@@ -523,17 +552,20 @@ impl ClipboardPopup {
             suppress_close:  Rc::clone(&self.suppress_close),
             now:             crate::clipboard::entry::now_secs(),
             screen_sizes:    Rc::clone(&self.screen_sizes),
+            tags:            Rc::new(tags),
         };
         for entry in entries {
             ids.push(entry.id);
             let id = entry.id;
             let h  = self.handler.clone();
-            let row = build_item_row(entry, &ctx, move |action| {
+            let item = build_item_row(entry, &ctx, move |action| {
                 h.emit(PopupEvent::Row(id, action));
             });
-            self.list_box.append(&row);
+            menus.push(item.open_menu);
+            self.list_box.append(&item.row);
         }
         drop(ids);
+        drop(menus);
 
         if entries.is_empty() {
             let row   = gtk4::ListBoxRow::new();
@@ -546,9 +578,17 @@ impl ClipboardPopup {
             row.set_child(Some(&label));
             self.list_box.append(&row);
         } else if is_repopulate {
-            // Restore scroll position — keeps the user's view stable after
-            // a delete, pin toggle, or label change.
+            // Restore scroll position and selection — keeps the user's view
+            // stable after a delete, pin toggle, or label change.
             self.scrolled.vadjustment().set_value(saved_scroll);
+            let row = restored_selection(saved_selection, entries.len())
+                .and_then(|i| self.list_box.row_at_index(i as i32));
+            if let Some(row) = row {
+                self.list_box.select_row(Some(&row));
+                if list_had_focus {
+                    row.grab_focus();
+                }
+            }
         } else {
             // Fresh open: start at the top with row 0 selected so keyboard
             // navigation works immediately.
@@ -797,6 +837,11 @@ fn do_close(
     if let Some(s) = state { (s.on_commit)(); }
 }
 
+/// Row to select after the list was rebuilt: the same position, clamped.
+fn restored_selection(previous: Option<usize>, len: usize) -> Option<usize> {
+    previous.filter(|_| len > 0).map(|i| i.min(len - 1))
+}
+
 /// The scroll-to-top button shows once the list is scrolled past one row.
 fn scroll_top_visible(value: f64, row_height: u32) -> bool {
     value > row_height as f64
@@ -876,6 +921,14 @@ mod tests {
         assert!(!scroll_top_visible(0.0, 44));
         assert!(!scroll_top_visible(44.0, 44));
         assert!(scroll_top_visible(45.0, 44));
+    }
+
+    #[test]
+    fn selection_stays_at_same_position_after_rebuild() {
+        assert_eq!(restored_selection(Some(2), 5), Some(2));
+        assert_eq!(restored_selection(Some(4), 4), Some(3)); // last row deleted
+        assert_eq!(restored_selection(Some(0), 0), None);
+        assert_eq!(restored_selection(None, 3), None);
     }
 
     #[test]

@@ -13,6 +13,7 @@ use gtk4::{Button, EventControllerMotion, GestureClick, Label, ListBoxRow, Orien
 use crate::clipboard::entry::{ClipboardContent, ClipboardEntry};
 use crate::clipboard::kind::ContentKind;
 use crate::events::RowAction;
+use crate::ui::context_menu;
 use crate::ui::format;
 use crate::ui::icons::{self, Icon};
 use crate::ui::theme::{normalize_color, tag_color, Theme};
@@ -31,6 +32,15 @@ pub struct RowContext {
     /// Monitor sizes in device pixels; an image of exactly that size is
     /// labelled "Screenshot".
     pub screen_sizes:    Rc<Vec<(u32, u32)>>,
+    /// Tags used anywhere in the history (for the "Add label" menu).
+    pub tags:            Rc<Vec<String>>,
+}
+
+/// A built row plus hooks the popup's keyboard shortcuts use.
+pub struct ItemRow {
+    pub row:       ListBoxRow,
+    /// Open the context menu (Menu key / Shift+F10).
+    pub open_menu: Rc<dyn Fn()>,
 }
 
 /// Kind of an entry, including images/screenshots.
@@ -51,7 +61,7 @@ pub fn build_item_row(
     entry:     &ClipboardEntry,
     ctx:       &RowContext,
     on_action: impl Fn(RowAction) + 'static,
-) -> ListBoxRow {
+) -> ItemRow {
     let theme = &ctx.theme;
     let on_action: Rc<dyn Fn(RowAction)> = Rc::new(on_action);
     let kind = entry_kind(entry, &ctx.screen_sizes);
@@ -187,8 +197,31 @@ pub fn build_item_row(
     connect(&del_btn, &on_action, RowAction::Remove);
     connect(&pin_btn, &on_action, RowAction::TogglePin);
 
-    let _ = &ctx.suppress_close; // used by the context menu (next task)
-    row
+    // Context menu: right-click at the pointer, or keyboard at the row.
+    let open_menu_at: Rc<dyn Fn(Option<(f64, f64)>)> = {
+        let row      = row.clone();
+        let entry    = entry.clone();
+        let theme    = Rc::clone(&ctx.theme);
+        let tags     = Rc::clone(&ctx.tags);
+        let suppress = Rc::clone(&ctx.suppress_close);
+        let cb       = Rc::clone(&on_action);
+        Rc::new(move |point| {
+            context_menu::show(&row, point, &entry, &theme, &tags, &suppress, Rc::clone(&cb));
+        })
+    };
+    {
+        let open = Rc::clone(&open_menu_at);
+        let gesture = GestureClick::new();
+        gesture.set_button(3);
+        gesture.connect_pressed(move |g, _, x, y| {
+            g.set_state(gtk4::EventSequenceState::Claimed);
+            open(Some((x, y)));
+        });
+        row.add_controller(gesture);
+    }
+    let open_menu: Rc<dyn Fn()> = Rc::new(move || open_menu_at(None));
+
+    ItemRow { row, open_menu }
 }
 
 fn row_button(icon: Icon, color: &str, tooltip: &str) -> Button {
