@@ -19,6 +19,9 @@ use crate::store::memory::MemoryStore;
 use crate::store::Store;
 use crate::ui::ClipboardPopup;
 
+/// D-Bus application id (single-instance name).
+pub const APP_ID: &str = "com.example.clipboard-manager";
+
 pub struct App {
     config:       AppConfig,
     store:        Rc<RefCell<Box<dyn Store>>>,
@@ -85,7 +88,8 @@ impl App {
             .init();
 
         let app = Application::builder()
-            .application_id("com.example.clipboard-manager")
+            .application_id(APP_ID)
+            .flags(gtk4::gio::ApplicationFlags::HANDLES_COMMAND_LINE)
             .build();
 
         let store        = Rc::clone(&self.store);
@@ -95,15 +99,38 @@ impl App {
         // Background threads → main loop.
         let (tx, rx) = async_channel::unbounded::<AppEvent>();
 
-        // ── Single-instance re-activation ─────────────────────────────────────
-        // GTK enforces a single instance via D-Bus (application_id). When a
-        // second `clipboard-manager` is launched (e.g. from a keyboard
-        // shortcut), GTK routes it here by calling connect_activate again.
-        let first_run = Cell::new(true);
+        // ── Single instance + command line ────────────────────────────────────
+        // GTK enforces a single instance via D-Bus (application_id). A second
+        // `clipboard-manager [command]` forwards its command line here; the
+        // first (local) command line is this daemon's own start.
+        let controller_slot: Rc<RefCell<Option<Rc<Controller>>>> = Rc::new(RefCell::new(None));
+        {
+            let slot = Rc::clone(&controller_slot);
+            app.connect_command_line(move |app, cmdline| {
+                if !cmdline.is_remote() {
+                    app.activate();
+                    return 0;
+                }
+                let args: Vec<String> = cmdline
+                    .arguments()
+                    .iter()
+                    .map(|a| a.to_string_lossy().into_owned())
+                    .collect();
+                let controller = slot.borrow().clone();
+                // (Output can't be printed into the caller's terminal before
+                // glib 2.80, so remote commands report via the exit code.)
+                let ok = match (crate::cli::parse(&args), controller) {
+                    (Ok(cmd), Some(c)) => c.run_command(cmd),
+                    _ => false,
+                };
+                if ok { 0 } else { 1 }
+            });
+        }
 
+        let activated = Cell::new(false);
+        let slot = Rc::clone(&controller_slot);
         app.connect_activate(move |app| {
-            if !first_run.replace(false) {
-                let _ = tx.send_blocking(AppEvent::Show { prev_window: None });
+            if activated.replace(true) {
                 return;
             }
 
@@ -151,6 +178,11 @@ impl App {
             }
 
             controller.start_expiry();
+            *slot.borrow_mut() = Some(Rc::clone(&controller));
+            // Started by `clipboard-manager show` while no instance was running.
+            if std::env::var_os("_CM_SHOW_ON_START").is_some() {
+                let _ = tx.send_blocking(AppEvent::Show { prev_window: None });
+            }
 
             // ── Tray icon ─────────────────────────────────────────────────
             if config.tray_icon {

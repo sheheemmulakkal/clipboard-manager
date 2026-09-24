@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use gdk4::prelude::*;
 
+use crate::cli::Command;
 use crate::clipboard::entry::{ClipboardContent, ClipboardEntry};
 use crate::config::AppConfig;
 use crate::events::{AppEvent, MenuAction, PopupEvent, RowAction};
@@ -81,6 +82,29 @@ impl Controller {
             AppEvent::OpenSettings => self.handle_menu(MenuAction::OpenSettings),
             AppEvent::Quit => self.handle_menu(MenuAction::Quit),
         }
+    }
+
+    /// Execute a command forwarded from another `clipboard-manager` process.
+    /// Returns whether it succeeded.
+    pub fn run_command(&self, cmd: Command) -> bool {
+        let prev = || self.platform.capture_active_window();
+        match cmd {
+            Command::Start | Command::Show => self.handle_app(AppEvent::Show { prev_window: prev() }),
+            Command::Toggle => self.handle_app(AppEvent::Toggle { prev_window: prev() }),
+            Command::Pause => self.set_paused(Some(true)),
+            Command::Resume => self.set_paused(Some(false)),
+            Command::TogglePause => self.set_paused(None),
+            Command::Clear => {
+                self.store.borrow_mut().clear_unpinned();
+                if self.popup.is_visible() {
+                    self.refresh();
+                }
+            }
+            Command::Quit => self.popup.quit(),
+            // Handled by the client process itself.
+            Command::List { .. } | Command::Reload | Command::Help | Command::Version => return false,
+        }
+        true
     }
 
     /// Apply `expire_after_days` now and then hourly.

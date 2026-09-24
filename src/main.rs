@@ -1,4 +1,5 @@
 mod app;
+mod cli;
 mod clipboard;
 mod config;
 mod controller;
@@ -12,13 +13,38 @@ mod tray;
 mod ui;
 
 use app::App;
+use glib::prelude::ToVariant;
 
 fn main() {
-    // ── Handle subcommands ───────────────────────────────────────────────────
     let args: Vec<String> = std::env::args().collect();
-    if args.get(1).map(|s| s.as_str()) == Some("reload") {
-        reload_daemon();
-        return;
+    let command = match cli::parse(&args) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("clipboard-manager: {e}");
+            std::process::exit(2);
+        }
+    };
+    match command {
+        cli::Command::Help => {
+            print!("{}", cli::USAGE);
+            return;
+        }
+        cli::Command::Version => {
+            println!("clipboard-manager {}", env!("CARGO_PKG_VERSION"));
+            return;
+        }
+        cli::Command::Reload => {
+            reload_daemon();
+            return;
+        }
+        cli::Command::List { limit } => {
+            // Read-only: straight from the history file, daemon or not.
+            let entries = store::engine::PersistenceEngine::new(paths::history_file()).load();
+            print!("{}", cli::format_list(&ui::filter::sorted(entries), limit));
+            return;
+        }
+        ref c if c.is_remote() => std::process::exit(send_to_running(&args, c)),
+        _ => {}
     }
 
     // ── Wayland guard (user-facing error, shown before daemonizing) ──────────
@@ -48,36 +74,92 @@ fn main() {
     }
 }
 
-/// Kill the running daemon and start a fresh one.
-/// Safe to run from a terminal: uses a pattern that matches the bare daemon
-/// process (`clipboard-manager` with no args) but not this reload process
-/// (`clipboard-manager reload`).
-fn reload_daemon() {
-    // `clipboard-manager$` matches cmdlines ending with the binary name only —
-    // the reload process cmdline ends with "reload", so it is not killed.
-    let killed = std::process::Command::new("pkill")
-        .args(["-TERM", "-f", "clipboard-manager$"])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
+/// Forward a command to the running instance over D-Bus and return the exit
+/// status it reports. `show`/`toggle` start the daemon if none is running.
+fn send_to_running(args: &[String], command: &cli::Command) -> i32 {
+    use gtk4::gio;
+    use gtk4::gio::prelude::*;
 
-    if killed {
-        // Give the old instance time to clean up.
-        std::thread::sleep(std::time::Duration::from_millis(400));
+    let app = gio::Application::new(Some(app::APP_ID), gio::ApplicationFlags::HANDLES_COMMAND_LINE);
+    if let Err(e) = app.register(None::<&gio::Cancellable>) {
+        eprintln!("clipboard-manager: cannot reach the session bus: {e}");
+        return 1;
+    }
+    if app.is_remote() {
+        let status = app.run_with_args(args).value();
+        if status != 0 {
+            eprintln!("clipboard-manager: the running instance could not run '{}'", args[1..].join(" "));
+        }
+        return status;
+    }
+    // Nobody else owns the name: no instance is running.
+    drop(app);
+    match command {
+        cli::Command::Show | cli::Command::Toggle => {
+            let Ok(exe) = std::env::current_exe() else { return 1 };
+            match spawn_daemon(&exe, true) {
+                Ok(_) => 0,
+                Err(e) => {
+                    eprintln!("clipboard-manager: cannot start: {e}");
+                    1
+                }
+            }
+        }
+        _ => {
+            eprintln!("clipboard-manager is not running (start it with: clipboard-manager)");
+            1
+        }
+    }
+}
+
+/// Stop the running instance (if any) and start a fresh one.
+fn reload_daemon() {
+    let was_running = is_running();
+    if was_running {
+        let args = vec!["clipboard-manager".to_string(), "quit".to_string()];
+        send_to_running(&args, &cli::Command::Quit);
+        // Wait for the old instance to release its D-Bus name.
+        for _ in 0..50 {
+            if !is_running() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
     }
 
     let Ok(exe) = std::env::current_exe() else {
         eprintln!("clipboard-manager: reload failed (cannot locate executable)");
         std::process::exit(1);
     };
-
-    match spawn_daemon(&exe) {
-        Ok(_)  => println!("clipboard-manager: reloaded"),
+    match spawn_daemon(&exe, false) {
+        Ok(_) => println!("clipboard-manager: {}", if was_running { "reloaded" } else { "started" }),
         Err(e) => {
             eprintln!("clipboard-manager: reload failed: {e}");
             std::process::exit(1);
         }
     }
+}
+
+/// Whether an instance currently owns the application's D-Bus name.
+fn is_running() -> bool {
+    use gtk4::gio;
+    let Ok(bus) = gio::bus_get_sync(gio::BusType::Session, None::<&gio::Cancellable>) else {
+        return false;
+    };
+    bus.call_sync(
+        Some("org.freedesktop.DBus"),
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus",
+        "NameHasOwner",
+        Some(&(app::APP_ID,).to_variant()),
+        Some(glib::VariantTy::new("(b)").unwrap()),
+        gio::DBusCallFlags::NONE,
+        1000,
+        None::<&gio::Cancellable>,
+    )
+    .ok()
+    .and_then(|v| v.get::<(bool,)>())
+    .is_some_and(|(owned,)| owned)
 }
 
 /// Re-exec the process detached from the terminal (stdin/stdout to
@@ -94,7 +176,7 @@ fn daemonize_if_needed() {
 
     let Ok(exe) = std::env::current_exe() else { return };
 
-    if spawn_daemon(&exe).is_ok() {
+    if spawn_daemon(&exe, false).is_ok() {
         std::process::exit(0);
     }
     // Spawn failed → fall through and run in foreground as a graceful fallback.
@@ -103,7 +185,8 @@ fn daemonize_if_needed() {
 /// Start the detached daemon child. Its stderr (where the log goes) is
 /// written to `$XDG_STATE_HOME/clipboard-manager/clipboard-manager.log`,
 /// truncated on every start, so problems are diagnosable after the fact.
-fn spawn_daemon(exe: &std::path::Path) -> std::io::Result<std::process::Child> {
+/// `show_popup` opens the popup once the new instance is up.
+fn spawn_daemon(exe: &std::path::Path, show_popup: bool) -> std::io::Result<std::process::Child> {
     use std::os::unix::fs::OpenOptionsExt;
     use std::process::Stdio;
     let stderr = std::fs::OpenOptions::new()
@@ -114,8 +197,11 @@ fn spawn_daemon(exe: &std::path::Path) -> std::io::Result<std::process::Child> {
         .open(paths::state_dir().join("clipboard-manager.log"))
         .map(Stdio::from)
         .unwrap_or_else(|_| Stdio::null());
-    std::process::Command::new(exe)
-        .env("_CM_DAEMON", "1")
+    let mut cmd = std::process::Command::new(exe);
+    if show_popup {
+        cmd.env("_CM_SHOW_ON_START", "1");
+    }
+    cmd.env("_CM_DAEMON", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(stderr)
