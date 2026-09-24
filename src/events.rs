@@ -23,6 +23,8 @@ pub enum RowAction {
     Remove,
     TogglePin,
     SetMeta(EntryMeta),
+    /// Replace the text of a text entry.
+    EditContent(String),
 }
 
 pub enum PopupEvent {

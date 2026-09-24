@@ -69,6 +69,24 @@ impl Store for MemoryStore {
         }
     }
 
+    fn set_text(&mut self, id: u64, text: String) {
+        if text.trim().is_empty() {
+            return;
+        }
+        let is_text = matches!(self.get(id).map(|e| &e.content), Some(ClipboardContent::Text(_)));
+        if !is_text {
+            return;
+        }
+        if self.deduplicate {
+            self.entries.retain(|e| {
+                e.id == id || !matches!(&e.content, ClipboardContent::Text(t) if *t == text)
+            });
+        }
+        if let Some(e) = self.entries.iter_mut().find(|e| e.id == id) {
+            e.content = ClipboardContent::Text(text);
+        }
+    }
+
     fn set_meta(&mut self, id: u64, meta: EntryMeta) {
         if let Some(e) = self.entries.iter_mut().find(|e| e.id == id) {
             e.label = meta.label;
@@ -295,6 +313,36 @@ mod tests {
         s.add(make_text(3, "a"));
         let ids: Vec<u64> = s.get_all().iter().map(|e| e.id).collect();
         assert_eq!(ids, vec![2, 1]);
+    }
+
+    #[test]
+    fn set_text_edits_content() {
+        let mut s = MemoryStore::new(10, true);
+        s.add(make_text(1, "old"));
+        s.set_text(1, "new".into());
+        assert!(s.contains_text("new"));
+        assert!(!s.contains_text("old"));
+    }
+
+    #[test]
+    fn set_text_ignores_empty_and_images() {
+        let mut s = MemoryStore::new(10, true);
+        s.add(make_text(1, "keep"));
+        s.add(ClipboardEntry::new_image(2, [1; 32], 2, 2));
+        s.set_text(1, "   ".into());
+        s.set_text(2, "text".into());
+        assert!(s.contains_text("keep"));
+        assert!(s.get(2).unwrap().is_image());
+    }
+
+    #[test]
+    fn set_text_to_existing_text_merges_duplicates() {
+        let mut s = MemoryStore::new(10, true);
+        s.add(make_text(1, "a"));
+        s.add(make_text(2, "b"));
+        s.set_text(1, "b".into());
+        let ids: Vec<u64> = s.get_all().iter().map(|e| e.id).collect();
+        assert_eq!(ids, vec![1]);
     }
 
     #[test]

@@ -26,6 +26,9 @@ pub trait Store: Send + Sync {
     fn len(&self) -> usize;
     fn set_pinned(&mut self, id: u64, pinned: bool);
     fn set_meta(&mut self, id: u64, meta: EntryMeta);
+    /// Replace the text of a text entry (user edit). Empty text is ignored;
+    /// with deduplication on, another entry with the same text is removed.
+    fn set_text(&mut self, id: u64, text: String);
     /// Remove all entries that are not pinned.
     fn clear_unpinned(&mut self);
     /// Put previously removed entries back (undo). Entries whose id is

@@ -35,6 +35,21 @@ window.no-compositing .popup-card {{
     box-shadow: none;
 }}
 
+/* ── Reset theme button styling for all custom buttons ─────────────── */
+.menu-item, .row-btn, .pin-toggle, .header-btn, .close-btn, .primary-btn,
+.secondary-btn, .undo-btn, .scroll-top-btn {{
+    background-image: none;
+    text-shadow: none;
+    -gtk-icon-shadow: none;
+    outline-color: alpha({accent}, 0.6);
+}}
+.primary-btn label {{
+    color: white;
+}}
+.secondary-btn label, .menu-item label {{
+    color: {text};
+}}
+
 /* ── Header ──────────────────────────────────────────────────────────── */
 .popup-header {{
     padding: 12px 12px 8px 12px;
@@ -322,6 +337,10 @@ popover.cm-editor entry {{
     border: 1px solid {border};
     box-shadow: none;
     min-height: 32px;
+}}
+popover.cm-editor entry:focus-within {{
+    border-color: alpha({accent}, 0.7);
+    outline: none;
 }}
 .editor-scroll {{
     border: 1px solid {border};

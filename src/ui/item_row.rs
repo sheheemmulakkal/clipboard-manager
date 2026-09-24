@@ -14,6 +14,7 @@ use crate::clipboard::entry::{ClipboardContent, ClipboardEntry};
 use crate::clipboard::kind::ContentKind;
 use crate::events::RowAction;
 use crate::ui::context_menu;
+use crate::ui::editor;
 use crate::ui::format;
 use crate::ui::icons::{self, Icon};
 use crate::ui::theme::{normalize_color, tag_color, Theme};
@@ -38,9 +39,16 @@ pub struct RowContext {
 
 /// A built row plus hooks the popup's keyboard shortcuts use.
 pub struct ItemRow {
-    pub row:       ListBoxRow,
+    pub row:   ListBoxRow,
+    pub hooks: RowHooks,
+}
+
+#[derive(Clone)]
+pub struct RowHooks {
     /// Open the context menu (Menu key / Shift+F10).
-    pub open_menu: Rc<dyn Fn()>,
+    pub open_menu:   Rc<dyn Fn()>,
+    /// Open the editor (Ctrl+E).
+    pub open_editor: Rc<dyn Fn()>,
 }
 
 /// Kind of an entry, including images/screenshots.
@@ -197,6 +205,14 @@ pub fn build_item_row(
     connect(&del_btn, &on_action, RowAction::Remove);
     connect(&pin_btn, &on_action, RowAction::TogglePin);
 
+    let open_editor: Rc<dyn Fn()> = {
+        let row      = row.clone();
+        let entry    = entry.clone();
+        let suppress = Rc::clone(&ctx.suppress_close);
+        let cb       = Rc::clone(&on_action);
+        Rc::new(move || editor::show(&row, &entry, &suppress, Rc::clone(&cb)))
+    };
+
     // Context menu: right-click at the pointer, or keyboard at the row.
     let open_menu_at: Rc<dyn Fn(Option<(f64, f64)>)> = {
         let row      = row.clone();
@@ -205,8 +221,9 @@ pub fn build_item_row(
         let tags     = Rc::clone(&ctx.tags);
         let suppress = Rc::clone(&ctx.suppress_close);
         let cb       = Rc::clone(&on_action);
+        let edit     = Rc::clone(&open_editor);
         Rc::new(move |point| {
-            context_menu::show(&row, point, &entry, &theme, &tags, &suppress, Rc::clone(&cb));
+            context_menu::show(&row, point, &entry, &theme, &tags, &suppress, Rc::clone(&cb), Rc::clone(&edit));
         })
     };
     {
@@ -221,7 +238,7 @@ pub fn build_item_row(
     }
     let open_menu: Rc<dyn Fn()> = Rc::new(move || open_menu_at(None));
 
-    ItemRow { row, open_menu }
+    ItemRow { row, hooks: RowHooks { open_menu, open_editor } }
 }
 
 fn row_button(icon: Icon, color: &str, tooltip: &str) -> Button {

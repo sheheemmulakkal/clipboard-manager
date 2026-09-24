@@ -63,6 +63,11 @@ impl Store for PersistentStore {
         self.flush();
     }
 
+    fn set_text(&mut self, id: u64, text: String) {
+        self.inner.set_text(id, text);
+        self.flush();
+    }
+
     fn set_meta(&mut self, id: u64, meta: EntryMeta) {
         self.inner.set_meta(id, meta);
         self.flush();

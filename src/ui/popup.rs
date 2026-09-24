@@ -14,7 +14,7 @@ use crate::config::{AppConfig, ThemeName};
 use crate::events::{MenuAction, PopupEvent, RowAction};
 use crate::platform::Platform;
 use crate::ui::icons::{self, Icon};
-use crate::ui::item_row::{build_item_row, RowContext};
+use crate::ui::item_row::{build_item_row, RowContext, RowHooks};
 use crate::ui::style::generate_css;
 use crate::ui::theme::Theme;
 
@@ -52,9 +52,9 @@ pub struct ClipboardPopup {
     window:              Window,
     scrolled:            ScrolledWindow,
     list_box:            ListBox,
-    /// Entry id and context-menu opener of each list row, by row index.
+    /// Entry id and keyboard hooks of each list row, by row index.
     row_ids:             Rc<RefCell<Vec<u64>>>,
-    row_menus:           Rc<RefCell<Vec<Rc<dyn Fn()>>>>,
+    row_hooks:           Rc<RefCell<Vec<RowHooks>>>,
     handler:             EventHandler,
     undo_bar:            gtk4::Box,
     undo_label:          Label,
@@ -254,7 +254,7 @@ impl ClipboardPopup {
 
         // ── Shared state ──────────────────────────────────────────────────────
         let row_ids:      Rc<RefCell<Vec<u64>>>               = Rc::new(RefCell::new(vec![]));
-        let row_menus:    Rc<RefCell<Vec<Rc<dyn Fn()>>>>      = Rc::new(RefCell::new(vec![]));
+        let row_hooks:    Rc<RefCell<Vec<RowHooks>>>          = Rc::new(RefCell::new(vec![]));
         let undo_pending: Rc<RefCell<Option<UndoPending>>>    = Rc::new(RefCell::new(None));
         let undo_tick:    Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
 
@@ -326,7 +326,7 @@ impl ClipboardPopup {
             let win_ref = window.clone();
             let lb      = list_box.clone();
             let ids     = Rc::clone(&row_ids);
-            let menus   = Rc::clone(&row_menus);
+            let hooks   = Rc::clone(&row_hooks);
             let h       = handler.clone();
             let se      = search_entry.clone();
 
@@ -351,9 +351,16 @@ impl ClipboardPopup {
                         row_action(RowAction::Copy)
                     }
                     k if k == gdk4::Key::Menu || (shift && k == gdk4::Key::F10) => {
-                        let open = selected().and_then(|i| menus.borrow().get(i).cloned());
-                        if let Some(open) = open {
-                            open();
+                        let hook = selected().and_then(|i| hooks.borrow().get(i).cloned());
+                        if let Some(hook) = hook {
+                            (hook.open_menu)();
+                        }
+                        Propagation::Stop
+                    }
+                    k if ctrl && k == gdk4::Key::e => {
+                        let hook = selected().and_then(|i| hooks.borrow().get(i).cloned());
+                        if let Some(hook) = hook {
+                            (hook.open_editor)();
                         }
                         Propagation::Stop
                     }
@@ -509,7 +516,7 @@ impl ClipboardPopup {
         }
 
         Self {
-            window, scrolled, list_box, row_ids, row_menus, handler,
+            window, scrolled, list_box, row_ids, row_hooks, handler,
             undo_bar, undo_label, undo_pending, undo_tick,
             platform, theme, show_timestamps: config.show_timestamps,
             search_entry, suppress_close, size,
@@ -542,9 +549,9 @@ impl ClipboardPopup {
         }
 
         let mut ids = self.row_ids.borrow_mut();
-        let mut menus = self.row_menus.borrow_mut();
+        let mut hooks = self.row_hooks.borrow_mut();
         ids.clear();
-        menus.clear();
+        hooks.clear();
 
         let ctx = RowContext {
             theme:           Rc::clone(&self.theme),
@@ -561,11 +568,11 @@ impl ClipboardPopup {
             let item = build_item_row(entry, &ctx, move |action| {
                 h.emit(PopupEvent::Row(id, action));
             });
-            menus.push(item.open_menu);
+            hooks.push(item.hooks);
             self.list_box.append(&item.row);
         }
         drop(ids);
-        drop(menus);
+        drop(hooks);
 
         if entries.is_empty() {
             let row   = gtk4::ListBoxRow::new();

@@ -156,6 +156,10 @@ impl Controller {
                 self.store.borrow_mut().set_meta(id, meta);
                 self.refresh();
             }
+            RowAction::EditContent(text) => {
+                self.store.borrow_mut().set_text(id, text);
+                self.refresh();
+            }
         }
     }
 

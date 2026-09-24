@@ -41,6 +41,7 @@ pub fn show(
     tags:     &[String],
     suppress: &Rc<Cell<u32>>,
     emit:     Rc<dyn Fn(RowAction)>,
+    on_edit:  Rc<dyn Fn()>,
 ) {
     let popover = Popover::new();
     popover.add_css_class("cm-menu");
@@ -54,26 +55,29 @@ pub fn show(
 
     // The chosen action runs after the popover has closed and been removed
     // from the row: the action usually rebuilds the list (destroying the row).
-    let pending: Rc<RefCell<Option<RowAction>>> = Rc::new(RefCell::new(None));
+    let pending: Rc<RefCell<Option<Choice>>> = Rc::new(RefCell::new(None));
     {
         let pending = Rc::clone(&pending);
         popover.connect_closed(move |p| {
-            let action = pending.borrow_mut().take();
+            let choice = pending.borrow_mut().take();
             let p = p.clone();
             let emit = Rc::clone(&emit);
+            let on_edit = Rc::clone(&on_edit);
             glib::idle_add_local_once(move || {
                 p.unparent();
-                if let Some(a) = action {
-                    emit(a);
+                match choice {
+                    Some(Choice::Action(a)) => emit(a),
+                    Some(Choice::Edit) => on_edit(),
+                    None => {}
                 }
             });
         });
     }
-    let choose: Rc<dyn Fn(RowAction)> = {
+    let choose: Rc<dyn Fn(Choice)> = {
         let pending = Rc::clone(&pending);
         let popover = popover.clone();
-        Rc::new(move |a| {
-            *pending.borrow_mut() = Some(a);
+        Rc::new(move |c| {
+            *pending.borrow_mut() = Some(c);
             popover.popdown();
         })
     };
@@ -94,22 +98,36 @@ pub fn show(
     popover.popup();
 }
 
+/// What the user picked in the menu.
+#[derive(Clone)]
+enum Choice {
+    Action(RowAction),
+    /// Open the editor (a UI action, not a store change).
+    Edit,
+}
+
 fn meta(entry: &ClipboardEntry) -> EntryMeta {
     EntryMeta { label: entry.label.clone(), color: entry.color.clone(), tag: entry.tag.clone() }
 }
 
-fn main_page(entry: &ClipboardEntry, theme: &Theme, stack: &Stack, choose: &Rc<dyn Fn(RowAction)>) -> gtk4::Box {
+fn main_page(entry: &ClipboardEntry, theme: &Theme, stack: &Stack, choose: &Rc<dyn Fn(Choice)>) -> gtk4::Box {
     let page = gtk4::Box::new(Orientation::Vertical, 0);
     let ic = &theme.icon_muted;
 
     let item = |icon, label: &str, accel: Option<&str>, action: RowAction| {
         let b = menu_item(icon, label, accel, ic);
         let choose = Rc::clone(choose);
-        b.connect_clicked(move |_| choose(action.clone()));
+        b.connect_clicked(move |_| choose(Choice::Action(action.clone())));
         b
     };
 
     page.append(&item(Icon::Copy, "Copy", Some("Ctrl+C"), RowAction::Copy));
+    let edit = menu_item(Icon::Pencil, "Edit", Some("Ctrl+E"), ic);
+    {
+        let choose = Rc::clone(choose);
+        edit.connect_clicked(move |_| choose(Choice::Edit));
+    }
+    page.append(&edit);
     let (pin_icon, pin_label) = if entry.pinned { (Icon::PinFilled, "Unpin") } else { (Icon::Pin, "Pin") };
     page.append(&item(pin_icon, pin_label, Some("Ctrl+P"), RowAction::TogglePin));
     page.append(&submenu_item(Icon::Tag, "Add label", ic, stack, "tags"));
@@ -122,7 +140,7 @@ fn main_page(entry: &ClipboardEntry, theme: &Theme, stack: &Stack, choose: &Rc<d
     del.add_css_class("danger");
     {
         let choose = Rc::clone(choose);
-        del.connect_clicked(move |_| choose(RowAction::Remove));
+        del.connect_clicked(move |_| choose(Choice::Action(RowAction::Remove)));
     }
     page.append(&del);
     page
@@ -133,7 +151,7 @@ fn tags_page(
     theme:  &Theme,
     tags:   &[String],
     stack:  &Stack,
-    choose: &Rc<dyn Fn(RowAction)>,
+    choose: &Rc<dyn Fn(Choice)>,
 ) -> gtk4::Box {
     let page = gtk4::Box::new(Orientation::Vertical, 0);
     page.append(&back_header("Add label", theme, stack));
@@ -145,7 +163,7 @@ fn tags_page(
         // Choosing the current tag again removes it.
         m.tag = if current { None } else { Some(tag.clone()) };
         let choose = Rc::clone(choose);
-        b.connect_clicked(move |_| choose(RowAction::SetMeta(m.clone())));
+        b.connect_clicked(move |_| choose(Choice::Action(RowAction::SetMeta(m.clone()))));
         page.append(&b);
     }
     if entry.tag.is_some() {
@@ -153,7 +171,7 @@ fn tags_page(
         let mut m = meta(entry);
         m.tag = None;
         let choose = Rc::clone(choose);
-        b.connect_clicked(move |_| choose(RowAction::SetMeta(m.clone())));
+        b.connect_clicked(move |_| choose(Choice::Action(RowAction::SetMeta(m.clone()))));
         page.append(&b);
     }
 
@@ -182,7 +200,7 @@ fn tags_page(
             if let Some(tag) = clean_tag(&e.text()) {
                 let mut m = m.clone();
                 m.tag = Some(tag);
-                choose(RowAction::SetMeta(m));
+                choose(Choice::Action(RowAction::SetMeta(m)));
             }
         });
     }
@@ -191,7 +209,7 @@ fn tags_page(
     page
 }
 
-fn colors_page(entry: &ClipboardEntry, theme: &Theme, stack: &Stack, choose: &Rc<dyn Fn(RowAction)>) -> gtk4::Box {
+fn colors_page(entry: &ClipboardEntry, theme: &Theme, stack: &Stack, choose: &Rc<dyn Fn(Choice)>) -> gtk4::Box {
     let page = gtk4::Box::new(Orientation::Vertical, 0);
     page.append(&back_header("Change colour", theme, stack));
 
@@ -201,7 +219,7 @@ fn colors_page(entry: &ClipboardEntry, theme: &Theme, stack: &Stack, choose: &Rc
         let mut m = meta(entry);
         m.color = Some(name.to_string());
         let choose = Rc::clone(choose);
-        b.connect_clicked(move |_| choose(RowAction::SetMeta(m.clone())));
+        b.connect_clicked(move |_| choose(Choice::Action(RowAction::SetMeta(m.clone()))));
         page.append(&b);
     }
     page.append(&menu_separator());
@@ -209,7 +227,7 @@ fn colors_page(entry: &ClipboardEntry, theme: &Theme, stack: &Stack, choose: &Rc
     let mut m = meta(entry);
     m.color = None;
     let choose = Rc::clone(choose);
-    none.connect_clicked(move |_| choose(RowAction::SetMeta(m.clone())));
+    none.connect_clicked(move |_| choose(Choice::Action(RowAction::SetMeta(m.clone()))));
     page.append(&none);
     page
 }
