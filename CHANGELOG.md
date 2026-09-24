@@ -19,6 +19,7 @@ All notable changes to Clipboard Manager will be documented here.
 - **Notes**: attach longer, searchable text to any item (menu → Add note…).
 - Rows show the copied content (or your label) in bold; the type is shown
   by the icon. Explicitly coloured rows are tinted in that colour.
+- Pinned items are grouped under a PINNED header above RECENT items.
 - Digits 1–9 paste directly while the search is empty (keycaps show the
   numbers); Ctrl+K or / switches digits to searching.
 - **Full preview** of long text and images (Space).

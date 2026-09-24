@@ -39,7 +39,7 @@ The app starts automatically after install. Copy as usual, then press
 | **Filter** | Chips under the search box: All · Pinned · Text · Images · Links · Code · your tags |
 | **Preview** | **Space**, or the 👁 button on hover — full text or the whole image |
 | **Copy / paste to terminal / delete** | Buttons appear when you hover over a row |
-| **Pin** (never evicted, always on top) | The pin on the right of a row, or **Ctrl+P** |
+| **Pin** (never evicted, listed under **PINNED** at the top) | The pin on the right of a row, or **Ctrl+P** |
 | **Menu** | Right-click a row, **Menu** key or **Shift+F10** |
 | **Edit title, text or note** | Menu → Edit, or **Ctrl+E** |
 | **Note** (longer text, searchable) | Menu → Add note… — shown with ✎ under the item and in Preview |

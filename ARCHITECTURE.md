@@ -42,14 +42,14 @@ src/
     mod.rs           Store trait
     memory.rs        MemoryStore: ordering, dedup-as-bump, eviction, restore, expiry
     persistent.rs    PersistentStore: MemoryStore + flush on every mutation
-    engine.rs        history.bin reader/writer (V1–V4)
+    engine.rs        history.bin reader/writer (V1–V5)
   hotkey/            X11 XGrabKey · Wayland portal → GNOME shortcut → evdev
   platform/          X11Platform (x11rb, XTest) · WaylandPlatform (RemoteDesktop portal)
   ui/
     popup.rs         Window, header, search, chips, list, undo bar, keyboard, focus
-    item_row.rs      One row: dot, kind tile/thumbnail, title, tag pill, actions, pin
+    item_row.rs      One row: dot/keycap, kind tile/thumbnail, label-or-content, tag pill, actions, pin
     context_menu.rs  Right-click menu with tag and colour sub-pages
-    editor.rs        Edit title/content popover
+    editor.rs        Edit popover: title, content, note
     preview.rs       Full preview popover
     filter.rs        Ordering, search and chip filtering (pure)
     format.rs        Relative time, titles, subtitles, preview header (pure)
