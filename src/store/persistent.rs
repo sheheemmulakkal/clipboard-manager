@@ -78,6 +78,14 @@ impl Store for PersistentStore {
         self.flush();
     }
 
+    fn expire_older_than(&mut self, cutoff: u64) -> usize {
+        let n = self.inner.expire_older_than(cutoff);
+        if n > 0 {
+            self.flush();
+        }
+        n
+    }
+
     fn restore(&mut self, entries: Vec<ClipboardEntry>) {
         self.inner.restore(entries);
         self.flush();

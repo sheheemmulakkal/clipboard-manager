@@ -83,6 +83,31 @@ impl Controller {
         }
     }
 
+    /// Apply `expire_after_days` now and then hourly.
+    pub fn start_expiry(self: &Rc<Self>) {
+        let days = self.config.expire_after_days;
+        if days == 0 {
+            return;
+        }
+        let expire = {
+            let weak = Rc::downgrade(self);
+            move || {
+                let Some(c) = weak.upgrade() else { return glib::ControlFlow::Break };
+                let cutoff = crate::clipboard::entry::now_secs().saturating_sub(days * 86_400);
+                let n = c.store.borrow_mut().expire_older_than(cutoff);
+                if n > 0 {
+                    tracing::info!("[expire] removed {n} item(s) older than {days} day(s)");
+                    if c.popup.is_visible() {
+                        c.refresh();
+                    }
+                }
+                glib::ControlFlow::Continue
+            }
+        };
+        expire();
+        glib::timeout_add_seconds_local(3600, expire);
+    }
+
     /// Call `f` with the new state whenever capture is paused or resumed.
     pub fn on_pause_changed(&self, f: impl Fn(bool) + 'static) {
         self.pause_listeners.borrow_mut().push(Box::new(f));

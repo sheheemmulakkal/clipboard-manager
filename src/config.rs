@@ -13,6 +13,7 @@ fn default_popup_follow_cursor() -> bool { true }
 fn default_clear_undo_timeout_secs() -> u64 { 5 }
 fn default_max_text_bytes() -> usize { 1024 * 1024 }
 fn default_tray_icon() -> bool { true }
+fn default_expire_after_days() -> u64 { 0 }
 fn default_ignore_apps() -> Vec<String> {
     [
         "keepassxc", "org.keepassxc.KeePassXC", "1password", "bitwarden", "Enpass",
@@ -139,6 +140,9 @@ pub struct AppConfig {
     /// Default: common password managers.
     #[serde(default = "default_ignore_apps")]
     pub ignore_apps: Vec<String>,
+    /// Delete unpinned items older than this many days. 0 = keep forever.
+    #[serde(default = "default_expire_after_days")]
+    pub expire_after_days: u64,
     /// Show an icon in the system tray. Default: true.
     #[serde(default = "default_tray_icon")]
     pub tray_icon: bool,
@@ -167,6 +171,7 @@ impl Default for AppConfig {
             clear_undo_timeout_secs: default_clear_undo_timeout_secs(),
             max_text_bytes:          default_max_text_bytes(),
             tray_icon:               default_tray_icon(),
+            expire_after_days:       default_expire_after_days(),
             ignore_apps:             default_ignore_apps(),
             colors:                  ColorConfig::default(),
             sizes:                   SizeConfig::default(),

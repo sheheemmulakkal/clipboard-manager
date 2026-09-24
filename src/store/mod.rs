@@ -35,4 +35,7 @@ pub trait Store: Send + Sync {
     /// already present are ignored; history stays ordered by age and
     /// within `max_history`.
     fn restore(&mut self, entries: Vec<ClipboardEntry>);
+    /// Remove unpinned entries copied before `cutoff` (unix seconds).
+    /// Returns how many were removed.
+    fn expire_older_than(&mut self, cutoff: u64) -> usize;
 }

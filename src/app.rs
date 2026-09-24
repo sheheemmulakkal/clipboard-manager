@@ -150,6 +150,8 @@ impl App {
                 ),
             }
 
+            controller.start_expiry();
+
             // ── Tray icon ─────────────────────────────────────────────────
             if config.tray_icon {
                 if let Some(handle) = crate::tray::spawn(tx.clone(), &config.hotkey) {

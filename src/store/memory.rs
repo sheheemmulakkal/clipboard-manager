@@ -99,6 +99,12 @@ impl Store for MemoryStore {
         self.entries.retain(|e| e.pinned);
     }
 
+    fn expire_older_than(&mut self, cutoff: u64) -> usize {
+        let before = self.entries.len();
+        self.entries.retain(|e| e.pinned || e.copied_at >= cutoff);
+        before - self.entries.len()
+    }
+
     fn restore(&mut self, entries: Vec<ClipboardEntry>) {
         for e in entries {
             if !self.entries.iter().any(|x| x.id == e.id) {
@@ -343,6 +349,25 @@ mod tests {
         s.set_text(1, "b".into());
         let ids: Vec<u64> = s.get_all().iter().map(|e| e.id).collect();
         assert_eq!(ids, vec![1]);
+    }
+
+    #[test]
+    fn expire_removes_old_unpinned_only() {
+        let mut s = MemoryStore::new(10, true);
+        let mut old = make_text(1, "old");
+        old.copied_at = 100;
+        let mut old_pinned = make_text(2, "old pinned");
+        old_pinned.copied_at = 100;
+        old_pinned.pinned = true;
+        let mut new = make_text(3, "new");
+        new.copied_at = 1000;
+        s.add(old);
+        s.add(old_pinned);
+        s.add(new);
+        assert_eq!(s.expire_older_than(500), 1);
+        let ids: Vec<u64> = s.get_all().iter().map(|e| e.id).collect();
+        assert_eq!(ids, vec![2, 3]);
+        assert_eq!(s.expire_older_than(500), 0);
     }
 
     #[test]
