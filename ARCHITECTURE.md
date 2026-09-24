@@ -115,13 +115,13 @@ needs glib 2.80). `list` reads history.bin in the client process.
 
 ```rust
 enum ClipboardContent { Text(String), Image { hash: [u8; 32], width: u32, height: u32 } }
-struct ClipboardEntry { id, content, copied_at, pinned, label, color, tag }
+struct ClipboardEntry { id, content, copied_at, pinned, label, color, tag, note }
 ```
 
 Images are stored as `images/<sha256>.png` plus `<sha256>_thumb.png`;
 orphans are deleted at startup.
 
-## Persistence — history.bin (V4)
+## Persistence — history.bin (V5)
 
 ```
 header: magic "CLIPMGR1" | version u16 | flags u16 | count u32 | reserved[6]
@@ -131,11 +131,12 @@ entry:  type u8 (0 text, 1 image)
         label: has u8 [len u32 | utf8]
         color: has u8 [len u32 | utf8]
         tag:   has u8 [len u32 | utf8]            (V4)
+        note:  has u8 [len u32 | utf8]            (V5)
         crc32 u32 over everything after the type byte
 ```
 
 The file is written to `history.bin.tmp` (mode 0600, fsync) and renamed.
-The reader accepts V1–V4; an oversize or invalid-UTF-8 entry is skipped
+The reader accepts V1–V5; an oversize or invalid-UTF-8 entry is skipped
 (its length is known), and a CRC mismatch or truncation stops reading and
 keeps what was read so far.
 

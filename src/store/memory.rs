@@ -94,6 +94,7 @@ impl Store for MemoryStore {
                 e.label = e.label.take().or(other.label);
                 e.color = e.color.take().or(other.color);
                 e.tag = e.tag.take().or(other.tag);
+                e.note = e.note.take().or(other.note);
             }
         }
     }
@@ -103,6 +104,7 @@ impl Store for MemoryStore {
             e.label = meta.label;
             e.color = meta.color;
             e.tag   = meta.tag;
+            e.note  = meta.note;
         }
     }
 

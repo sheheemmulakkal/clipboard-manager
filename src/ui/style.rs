@@ -418,6 +418,18 @@ popover.cm-editor entry:focus-within {{
         ));
     }
     css.push_str(&format!(".dot-none {{ background-color: alpha({text_muted}, 0.6); }}\n"));
+
+    // Rows with an explicit colour: left bar, faint tint, tinted icon tile.
+    // (Pinned rows keep their accent border; the tint shows inside it.)
+    for (name, hex) in COLORS {
+        css.push_str(&format!(
+            "list.history > row.tint-{name} {{ background-color: alpha({hex}, 0.08); \
+             box-shadow: inset 3px 0 0 {hex}; border-radius: 10px; }}\n\
+             list.history > row.tint-{name}:hover {{ background-color: alpha({hex}, 0.13); }}\n\
+             list.history > row.tint-{name}:selected {{ background-color: alpha({hex}, 0.18); }}\n\
+             .tint-{name} .kind-tile {{ background-color: alpha({hex}, 0.20); }}\n"
+        ));
+    }
     css
 }
 
@@ -433,6 +445,8 @@ mod tests {
         assert!(css.contains("#f97316"));
         assert!(css.contains(".dot-purple"));
         assert!(css.contains(".tag-green"));
+        assert!(css.contains("row.tint-purple"));
+        assert!(css.contains(".tint-purple .kind-tile"));
         assert!(!css.contains("{{"));
     }
 }

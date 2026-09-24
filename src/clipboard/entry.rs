@@ -18,6 +18,8 @@ pub struct EntryMeta {
     pub label: Option<String>,
     pub color: Option<String>,
     pub tag:   Option<String>,
+    /// Free-form text the user attached (searchable).
+    pub note:  Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -29,6 +31,7 @@ pub struct ClipboardEntry {
     pub label:      Option<String>,
     pub color:      Option<String>,
     pub tag:        Option<String>,
+    pub note:       Option<String>,
 }
 
 impl ClipboardEntry {
@@ -41,6 +44,7 @@ impl ClipboardEntry {
             label: None,
             color: None,
             tag: None,
+            note: None,
         }
     }
 
@@ -53,6 +57,7 @@ impl ClipboardEntry {
             label: None,
             color: None,
             tag: None,
+            note: None,
         }
     }
 

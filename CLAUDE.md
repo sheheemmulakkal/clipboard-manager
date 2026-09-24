@@ -48,6 +48,6 @@ sudo apt install ./target/debian/clipboard-manager_*.deb
   mutates the store and calls `refresh()` to rebuild the list.
 - Popover actions are emitted after the popover closes and is unparented
   (they usually rebuild the row that owns the popover).
-- History format is V4 (tags added). V1–V3 files load transparently.
+- History format is V5 (tags in V4, notes in V5). V1–V4 files load transparently.
 - On Wayland the UI runs on XWayland (`GDK_BACKEND=x11`), paste uses the
   RemoteDesktop portal.

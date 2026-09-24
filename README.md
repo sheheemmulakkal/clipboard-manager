@@ -33,16 +33,18 @@ The app starts automatically after install. Copy as usual, then press
 | Action | How |
 |---|---|
 | **Paste** | Click a row, or select it and press **Enter** |
-| **Quick paste** | **Alt+1** … **Alt+9** (or **1**–**9** when the search box isn't focused) |
+| **Quick paste** | **1**–**9** right after opening (keycaps show which), or **Alt+1**–**Alt+9** any time |
+| **Search a number** | **Ctrl+K** or **/** first, then type (digits then go into the search) |
 | **Search** | Just type — or **Ctrl+K** / **/** to jump to the search box |
 | **Filter** | Chips under the search box: All · Pinned · Text · Images · Links · Code · your tags |
 | **Preview** | **Space**, or the 👁 button on hover — full text or the whole image |
 | **Copy / paste to terminal / delete** | Buttons appear when you hover over a row |
 | **Pin** (never evicted, always on top) | The pin on the right of a row, or **Ctrl+P** |
 | **Menu** | Right-click a row, **Menu** key or **Shift+F10** |
-| **Edit title or text** | Menu → Edit, or **Ctrl+E** |
+| **Edit title, text or note** | Menu → Edit, or **Ctrl+E** |
+| **Note** (longer text, searchable) | Menu → Add note… — shown with ✎ under the item and in Preview |
 | **Tag** (Work, Personal, Security, …) | Menu → Add label |
-| **Colour** | Menu → Change colour |
+| **Colour** | Menu → Change colour — tints the whole row |
 | **Delete** | **Delete** key, hover button, or menu |
 | **Top / bottom** | **Home** / **End**, or the ↑ button that appears when you scroll |
 | **Keep the popup open** | Pin icon in the header |

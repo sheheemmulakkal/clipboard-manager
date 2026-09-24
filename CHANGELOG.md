@@ -16,6 +16,11 @@ All notable changes to Clipboard Manager will be documented here.
 - **Tags** (Work, Personal, Security, Ideas, Snippets, or your own) and a new
   **right-click menu** with label and colour sub-menus.
 - **Edit** an item's title and text (Ctrl+E).
+- **Notes**: attach longer, searchable text to any item (menu → Add note…).
+- Rows show the copied content (or your label) in bold; the type is shown
+  by the icon. Explicitly coloured rows are tinted in that colour.
+- Digits 1–9 paste directly while the search is empty (keycaps show the
+  numbers); Ctrl+K or / switches digits to searching.
 - **Full preview** of long text and images (Space).
 - **Quick paste** with Alt+1–9.
 - **Filter chips**: All, Pinned, Text, Images, Links, Code and each tag.
@@ -41,7 +46,7 @@ All notable changes to Clipboard Manager will be documented here.
   read every 500 ms.
 - "Clear all" can be undone even if you delete or pin items meanwhile.
 - The popup opens inside the monitor under the cursor.
-- History format **V4** (adds tags). V1–V3 files still load.
+- History format **V5** (adds tags and notes). V1–V4 files still load.
 - Application id is now `io.github.sheheemmulakkal.ClipboardManager`.
 
 ### Fixed

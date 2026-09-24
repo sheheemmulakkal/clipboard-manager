@@ -96,6 +96,19 @@ pub fn show(row: &ListBoxRow, entry: &ClipboardEntry, suppress: &Rc<CloseGuard>,
         }
     }
 
+    if let Some(note) = entry.note.as_deref().filter(|n| !n.trim().is_empty()) {
+        let note_hdr = Label::new(Some("\u{270e} Note"));
+        note_hdr.add_css_class("popover-form-label");
+        note_hdr.set_xalign(0.0);
+        let note_lbl = Label::new(Some(note));
+        note_lbl.set_xalign(0.0);
+        note_lbl.set_wrap(true);
+        note_lbl.set_wrap_mode(gtk4::pango::WrapMode::WordChar);
+        note_lbl.set_max_width_chars(50);
+        vbox.append(&note_hdr);
+        vbox.append(&note_lbl);
+    }
+
     let buttons = gtk4::Box::new(Orientation::Horizontal, 8);
     buttons.set_halign(gtk4::Align::End);
     let copy = Button::with_label("Copy");

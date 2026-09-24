@@ -126,7 +126,10 @@ pub fn format_list(entries: &[ClipboardEntry], limit: usize) -> String {
             "{:>2} {} {:<10} {}\n",
             i + 1,
             if e.pinned { '*' } else { ' ' },
-            format::title(e, kind),
+            match e.label.as_deref().filter(|l| !l.trim().is_empty()) {
+                Some(l) => l.to_string(),
+                None => kind.title().to_string(),
+            },
             preview
         ));
     }

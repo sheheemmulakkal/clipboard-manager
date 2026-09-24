@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use crate::clipboard::entry::{ClipboardContent, ClipboardEntry};
 
 const MAGIC: &[u8; 8] = b"CLIPMGR1";
-const VERSION: u16 = 4;
+const VERSION: u16 = 5;
 const MAX_ENTRY_BYTES: u32 = crate::config::MAX_TEXT_BYTES_LIMIT as u32; // 10 MB guard
 
 pub struct PersistenceEngine {
@@ -106,6 +106,7 @@ fn crc32(data: &[u8]) -> u32 {
 // ── Entry serialization (V4 format) ───────────────────────────────────────────
 //
 // V4 = V3 + `| has_tag(1) | [tag_len(4) | tag(n)]` after the color, before the CRC.
+// V5 = V4 + `| has_note(1) | [note_len(4) | note(n)]` after the tag.
 //
 // V3 text entry:
 //   type(1)=0 | id(8) | copied_at(8) | pinned(1) | pad(3) | content_len(4) | content(n)
@@ -133,6 +134,7 @@ fn write_entry(w: &mut impl Write, e: &ClipboardEntry) -> anyhow::Result<()> {
             buf.extend_from_slice(content_bytes);
             write_label_color(&mut buf, &e.label, &e.color);
             write_opt_string(&mut buf, &e.tag);
+            write_opt_string(&mut buf, &e.note);
             let checksum = crc32(&buf);
             buf.extend_from_slice(&checksum.to_le_bytes());
             w.write_all(&buf)?;
@@ -149,6 +151,7 @@ fn write_entry(w: &mut impl Write, e: &ClipboardEntry) -> anyhow::Result<()> {
             buf.extend_from_slice(&height.to_le_bytes());
             write_label_color(&mut buf, &e.label, &e.color);
             write_opt_string(&mut buf, &e.tag);
+            write_opt_string(&mut buf, &e.note);
             let checksum = crc32(&buf);
             buf.extend_from_slice(&checksum.to_le_bytes());
             w.write_all(&buf)?;
@@ -206,7 +209,7 @@ fn parse_file(data: &[u8]) -> Vec<ClipboardEntry> {
         let result = match version {
             1 => read_entry_v1(data, &mut pos),
             2 => read_entry_v2(data, &mut pos),
-            v => read_entry_v3(data, &mut pos, v >= 4),
+            v => read_entry_v3(data, &mut pos, v >= 4, v >= 5),
         };
         match result {
             Some(ReadOutcome::Entry(e)) => entries.push(e),
@@ -332,6 +335,7 @@ fn read_entry_v1(data: &[u8], pos: &mut usize) -> Option<ReadOutcome> {
         label,
         color: None,
         tag: None,
+        note: None,
     }))
 }
 
@@ -358,12 +362,13 @@ fn read_entry_v2(data: &[u8], pos: &mut usize) -> Option<ReadOutcome> {
         label,
         color,
         tag: None,
+        note: None,
     }))
 }
 
 /// Read a V3/V4 entry: reads type byte first, then dispatches text or image
-/// layout. `with_tag` = V4 (tag field after the color).
-fn read_entry_v3(data: &[u8], pos: &mut usize, with_tag: bool) -> Option<ReadOutcome> {
+/// layout. `with_tag` = V4+ (tag after the color), `with_note` = V5 (note after the tag).
+fn read_entry_v3(data: &[u8], pos: &mut usize, with_tag: bool, with_note: bool) -> Option<ReadOutcome> {
     let entry_type = try_read_u8!(data, pos);
     let entry_start = *pos;
 
@@ -387,10 +392,11 @@ fn read_entry_v3(data: &[u8], pos: &mut usize, with_tag: bool) -> Option<ReadOut
     let label = read_opt_string(data, pos, "label")?;
     let color = read_opt_string(data, pos, "color")?;
     let tag   = if with_tag { read_opt_string(data, pos, "tag")? } else { None };
+    let note  = if with_note { read_opt_string(data, pos, "note")? } else { None };
     check_crc(data, entry_start, pos)?;
 
     let Some(content) = content else { return Some(ReadOutcome::Skipped) };
-    Some(ReadOutcome::Entry(ClipboardEntry { id, content, copied_at, pinned, label, color, tag }))
+    Some(ReadOutcome::Entry(ClipboardEntry { id, content, copied_at, pinned, label, color, tag, note }))
 }
 
 #[cfg(test)]
@@ -474,6 +480,48 @@ mod tests {
         assert_eq!(got[0].tag.as_deref(), Some("Work"));
         assert_eq!(got[1].tag.as_deref(), Some("Ideas"));
         assert_eq!(got[2].tag, None);
+    }
+
+    #[test]
+    fn roundtrip_note() {
+        let p = tmp("note");
+        let mut a = text(1, "hello");
+        a.note = Some("a long\nmulti-line note".into());
+        let e = PersistenceEngine::new(p);
+        e.flush(&[&a, &text(2, "plain")]).unwrap();
+        let got = e.load();
+        assert_eq!(got[0].note.as_deref(), Some("a long\nmulti-line note"));
+        assert_eq!(got[1].note, None);
+    }
+
+    #[test]
+    fn v4_file_still_loads() {
+        // V4 = V3 + tag, no note.
+        let mut out = Vec::new();
+        out.extend_from_slice(MAGIC);
+        out.extend_from_slice(&4u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&1u32.to_le_bytes());
+        out.extend_from_slice(&[0u8; 6]);
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&7u64.to_le_bytes());
+        buf.extend_from_slice(&1000u64.to_le_bytes());
+        buf.push(0);
+        buf.extend_from_slice(&[0u8; 3]);
+        buf.extend_from_slice(&2u32.to_le_bytes());
+        buf.extend_from_slice(b"v4");
+        write_label_color(&mut buf, &None, &Some("red".into()));
+        write_opt_string(&mut buf, &Some("Work".into()));
+        let c = crc32(&buf);
+        buf.extend_from_slice(&c.to_le_bytes());
+        out.push(0);
+        out.extend_from_slice(&buf);
+        let p = tmp("v4");
+        std::fs::write(&p, out).unwrap();
+        let got = PersistenceEngine::new(p).load();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].tag.as_deref(), Some("Work"));
+        assert_eq!(got[0].note, None);
     }
 
     #[test]

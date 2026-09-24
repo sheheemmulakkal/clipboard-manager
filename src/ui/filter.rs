@@ -13,7 +13,7 @@ pub fn sorted(mut entries: Vec<ClipboardEntry>) -> Vec<ClipboardEntry> {
 }
 
 /// Case-insensitive substring match on content (or "image WxH"), detected
-/// kind ("url", "code", …), label and tag.
+/// kind ("url", "code", …), label, tag and note.
 /// An empty query matches everything.
 pub fn matches_query(e: &ClipboardEntry, query: &str) -> bool {
     if query.is_empty() {
@@ -32,6 +32,7 @@ pub fn matches_query(e: &ClipboardEntry, query: &str) -> bool {
     content_match
         || e.label.as_deref().is_some_and(|l| l.to_lowercase().contains(&q))
         || e.tag.as_deref().is_some_and(|t| t.to_lowercase().contains(&q))
+        || e.note.as_deref().is_some_and(|n| n.to_lowercase().contains(&q))
 }
 
 /// Quick filters shown as chips under the search box.
@@ -144,6 +145,13 @@ mod tests {
         assert!(matches_query(&e, "BODY"));
         assert!(!matches_query(&e, "nothing"));
         assert!(matches_query(&e, ""));
+    }
+
+    #[test]
+    fn search_matches_note() {
+        let mut e = text(1, "abc", 1);
+        e.note = Some("Remember the VPN".into());
+        assert!(matches_query(&e, "vpn"));
     }
 
     #[test]

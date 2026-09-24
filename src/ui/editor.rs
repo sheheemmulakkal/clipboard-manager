@@ -11,15 +11,18 @@ use crate::events::RowAction;
 use crate::ui::popup::{dispose_popover, track_popover, CloseGuard};
 
 /// The row actions an edit results in (empty if nothing changed).
-pub fn edits(entry: &ClipboardEntry, title: &str, text: Option<&str>) -> Vec<RowAction> {
+pub fn edits(entry: &ClipboardEntry, title: &str, text: Option<&str>, note: &str) -> Vec<RowAction> {
     let mut out = Vec::new();
     let title = title.trim();
     let label = (!title.is_empty()).then(|| title.to_string());
-    if label != entry.label {
+    let note = note.trim();
+    let note = (!note.is_empty()).then(|| note.to_string());
+    if label != entry.label || note != entry.note {
         out.push(RowAction::SetMeta(EntryMeta {
             label,
             color: entry.color.clone(),
             tag:   entry.tag.clone(),
+            note,
         }));
     }
     if let (Some(new), ClipboardContent::Text(old)) = (text, &entry.content) {
@@ -30,8 +33,15 @@ pub fn edits(entry: &ClipboardEntry, title: &str, text: Option<&str>) -> Vec<Row
     out
 }
 
-/// Open the editor for `entry`, anchored to `row`.
-pub fn show(row: &ListBoxRow, entry: &ClipboardEntry, suppress: &Rc<CloseGuard>, emit: Rc<dyn Fn(RowAction)>) {
+/// Open the editor for `entry`, anchored to `row`. `focus_note` puts the
+/// cursor in the note field (menu "Add note…").
+pub fn show(
+    row:        &ListBoxRow,
+    entry:      &ClipboardEntry,
+    suppress:   &Rc<CloseGuard>,
+    emit:       Rc<dyn Fn(RowAction)>,
+    focus_note: bool,
+) {
     let popover = Popover::new();
     popover.add_css_class("cm-editor");
     popover.set_has_arrow(false);
@@ -81,6 +91,28 @@ pub fn show(row: &ListBoxRow, entry: &ClipboardEntry, suppress: &Rc<CloseGuard>,
         ClipboardContent::Image { .. } => None,
     };
 
+    let note_lbl = Label::new(Some("Note"));
+    note_lbl.add_css_class("popover-form-label");
+    note_lbl.set_xalign(0.0);
+    note_lbl.set_margin_top(6);
+    let note_view = TextView::new();
+    note_view.set_wrap_mode(gtk4::WrapMode::WordChar);
+    note_view.set_left_margin(8);
+    note_view.set_right_margin(8);
+    note_view.set_top_margin(6);
+    note_view.set_bottom_margin(6);
+    note_view.buffer().set_text(entry.note.as_deref().unwrap_or(""));
+    let note_scroll = gtk4::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk4::PolicyType::Never)
+        .min_content_height(70)
+        .max_content_height(200)
+        .propagate_natural_height(true)
+        .child(&note_view)
+        .build();
+    note_scroll.add_css_class("editor-scroll");
+    vbox.append(&note_lbl);
+    vbox.append(&note_scroll);
+
     let buttons = gtk4::Box::new(Orientation::Horizontal, 8);
     buttons.set_halign(gtk4::Align::End);
     buttons.set_margin_top(8);
@@ -119,6 +151,7 @@ pub fn show(row: &ListBoxRow, entry: &ClipboardEntry, suppress: &Rc<CloseGuard>,
         let entry = entry.clone();
         let title = title.clone();
         let view = content_view.clone();
+        let note_view = note_view.clone();
         let pending = Rc::clone(&pending);
         // Weak: this closure is also held by a key controller on the popover.
         let popover = popover.downgrade();
@@ -127,7 +160,9 @@ pub fn show(row: &ListBoxRow, entry: &ClipboardEntry, suppress: &Rc<CloseGuard>,
                 let b = v.buffer();
                 b.text(&b.start_iter(), &b.end_iter(), false).to_string()
             });
-            *pending.borrow_mut() = edits(&entry, &title.text(), text.as_deref());
+            let nb = note_view.buffer();
+            let note = nb.text(&nb.start_iter(), &nb.end_iter(), false);
+            *pending.borrow_mut() = edits(&entry, &title.text(), text.as_deref(), &note);
             if let Some(p) = popover.upgrade() {
                 p.popdown();
             }
@@ -163,7 +198,11 @@ pub fn show(row: &ListBoxRow, entry: &ClipboardEntry, suppress: &Rc<CloseGuard>,
     }
 
     popover.popup();
-    title.grab_focus();
+    if focus_note {
+        note_view.grab_focus();
+    } else {
+        title.grab_focus();
+    }
 }
 
 #[cfg(test)]
@@ -181,12 +220,29 @@ mod tests {
 
     #[test]
     fn unchanged_edit_does_nothing() {
-        assert!(edits(&entry(), "Title", Some("body")).is_empty());
+        assert!(edits(&entry(), "Title", Some("body"), "").is_empty());
+    }
+
+    #[test]
+    fn note_change_is_meta_and_blank_note_clears() {
+        match &edits(&entry(), "Title", Some("body"), "  my note  ")[0] {
+            RowAction::SetMeta(m) => {
+                assert_eq!(m.note.as_deref(), Some("my note"));
+                assert_eq!(m.label.as_deref(), Some("Title"));
+            }
+            other => panic!("{other:?}"),
+        }
+        let mut e = entry();
+        e.note = Some("old".into());
+        match &edits(&e, "Title", Some("body"), "   ")[0] {
+            RowAction::SetMeta(m) => assert_eq!(m.note, None),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
     fn title_change_keeps_colour_and_tag() {
-        let a = edits(&entry(), "  New  ", Some("body"));
+        let a = edits(&entry(), "  New  ", Some("body"), "");
         assert_eq!(a.len(), 1);
         match &a[0] {
             RowAction::SetMeta(m) => {
@@ -200,7 +256,7 @@ mod tests {
 
     #[test]
     fn blank_title_clears_label() {
-        match &edits(&entry(), "  ", Some("body"))[0] {
+        match &edits(&entry(), "  ", Some("body"), "")[0] {
             RowAction::SetMeta(m) => assert_eq!(m.label, None),
             other => panic!("{other:?}"),
         }
@@ -208,8 +264,8 @@ mod tests {
 
     #[test]
     fn content_change_is_an_edit_and_empty_content_is_ignored() {
-        let a = edits(&entry(), "Title", Some("changed"));
+        let a = edits(&entry(), "Title", Some("changed"), "");
         assert!(matches!(&a[..], [RowAction::EditContent(t)] if t == "changed"));
-        assert!(edits(&entry(), "Title", Some("   ")).is_empty());
+        assert!(edits(&entry(), "Title", Some("   "), "").is_empty());
     }
 }

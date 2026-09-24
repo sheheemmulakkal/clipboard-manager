@@ -98,6 +98,8 @@ pub struct ClipboardPopup {
     /// Entry id and keyboard hooks of each list row, by row index.
     row_ids:             Rc<RefCell<Vec<u64>>>,
     row_hooks:           Rc<RefCell<Vec<RowHooks>>>,
+    /// The user explicitly focused the search (digits are text, not paste).
+    search_armed:        Rc<Cell<bool>>,
     handler:             EventHandler,
     undo_bar:            gtk4::Box,
     undo_label:          Label,
@@ -319,6 +321,7 @@ impl ClipboardPopup {
         // ── Shared state ──────────────────────────────────────────────────────
         let row_ids:      Rc<RefCell<Vec<u64>>>               = Rc::new(RefCell::new(vec![]));
         let row_hooks:    Rc<RefCell<Vec<RowHooks>>>          = Rc::new(RefCell::new(vec![]));
+        let search_armed: Rc<Cell<bool>>                      = Rc::new(Cell::new(false));
         let undo_pending: Rc<RefCell<Option<UndoPending>>>    = Rc::new(RefCell::new(None));
         let undo_tick:    Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
 
@@ -368,6 +371,26 @@ impl ClipboardPopup {
                 h.emit(PopupEvent::SearchChanged(se.text().to_string()));
             });
         }
+        {
+            // Keycaps 1–9 show while digits paste.
+            let hooks = Rc::clone(&row_hooks);
+            let armed = Rc::clone(&search_armed);
+            search_entry.connect_changed(move |se| {
+                show_quick_badges(&hooks.borrow(), digits_paste(&se.text(), armed.get()));
+            });
+        }
+        {
+            // Clicking into the search box means "I want to search".
+            let gc = GestureClick::new();
+            gc.set_propagation_phase(gtk4::PropagationPhase::Capture);
+            let armed = Rc::clone(&search_armed);
+            let hooks = Rc::clone(&row_hooks);
+            gc.connect_pressed(move |_, _, _, _| {
+                armed.set(true);
+                show_quick_badges(&hooks.borrow(), false);
+            });
+            search_entry.add_controller(gc);
+        }
 
         // ── Wire: Undo button ─────────────────────────────────────────────────
         {
@@ -391,11 +414,17 @@ impl ClipboardPopup {
             let lb      = list_box.clone();
             let ids     = Rc::clone(&row_ids);
             let hooks   = Rc::clone(&row_hooks);
+            let armed   = Rc::clone(&search_armed);
             let h       = handler.clone();
             let se      = search_entry.clone();
 
             key_ctrl.connect_key_pressed(move |_, key, _, mods| {
                 use glib::Propagation;
+                // Typing in a popover (editor, "New label…", menus) is for
+                // the popover, not the popup's shortcuts.
+                if focus_in_popover(&win_ref) {
+                    return Propagation::Proceed;
+                }
                 let ctrl  = mods.contains(gdk4::ModifierType::CONTROL_MASK);
                 let shift = mods.contains(gdk4::ModifierType::SHIFT_MASK);
                 let alt   = mods.contains(gdk4::ModifierType::ALT_MASK);
@@ -412,8 +441,9 @@ impl ClipboardPopup {
                     show_quick_badges(&hooks.borrow(), true);
                     return Propagation::Proceed;
                 }
+                let paste_mode = digits_paste(&se.text(), armed.get()) || !in_search;
                 if !ctrl {
-                    if let Some(i) = quick_index(key, alt, in_search) {
+                    if let Some(i) = quick_index(key, alt, paste_mode) {
                         let id = ids.borrow().get(i).copied();
                         if let Some(id) = id {
                             h.emit(PopupEvent::Row(id, RowAction::Paste));
@@ -460,6 +490,8 @@ impl ClipboardPopup {
                     k if (ctrl && (k == gdk4::Key::k || k == gdk4::Key::f))
                         || (k == gdk4::Key::slash && !in_search) =>
                     {
+                        armed.set(true);
+                        show_quick_badges(&hooks.borrow(), false);
                         se.grab_focus();
                         se.select_region(0, -1);
                         Propagation::Stop
@@ -513,9 +545,11 @@ impl ClipboardPopup {
             });
             {
                 let hooks = Rc::clone(&row_hooks);
+                let armed = Rc::clone(&search_armed);
+                let se    = search_entry.clone();
                 key_ctrl.connect_key_released(move |_, key, _, _| {
                     if key == gdk4::Key::Alt_L || key == gdk4::Key::Alt_R {
-                        show_quick_badges(&hooks.borrow(), false);
+                        show_quick_badges(&hooks.borrow(), digits_paste(&se.text(), armed.get()));
                     }
                 });
             }
@@ -624,7 +658,7 @@ impl ClipboardPopup {
         }
 
         Self {
-            window, scrolled, list_box, row_ids, row_hooks, handler,
+            window, scrolled, list_box, row_ids, row_hooks, search_armed, handler,
             undo_bar, undo_label, undo_pending, undo_tick,
             platform, theme, show_timestamps: config.show_timestamps,
             search_entry, suppress_close, size,
@@ -684,6 +718,10 @@ impl ClipboardPopup {
         }
         drop(ids);
         drop(hooks);
+        show_quick_badges(
+            &self.row_hooks.borrow(),
+            digits_paste(&self.search_entry.text(), self.search_armed.get()),
+        );
 
         if entries.is_empty() {
             let row   = gtk4::ListBoxRow::new();
@@ -823,7 +861,9 @@ impl ClipboardPopup {
         });
     }
 
+    /// Reset the search for a fresh open (digits paste again).
     pub fn clear_search(&self) {
+        self.search_armed.set(false);
         self.search_entry.set_text("");
     }
 
@@ -1033,11 +1073,17 @@ fn restored_selection(previous: Option<usize>, len: usize) -> Option<usize> {
     previous.filter(|_| len > 0).map(|i| i.min(len - 1))
 }
 
-/// Row index for a quick-paste key: Alt+1…9 anywhere, or 1…9 when the
-/// search box doesn't have focus.
-fn quick_index(key: gdk4::Key, alt: bool, in_search: bool) -> Option<usize> {
+/// Plain digits paste (instead of typing into the search) while the search
+/// is empty and the user hasn't explicitly started a search (Ctrl+K, "/",
+/// or a click in the search box).
+fn digits_paste(query: &str, search_armed: bool) -> bool {
+    query.is_empty() && !search_armed
+}
+
+/// Row index for a quick-paste key: Alt+1…9 always, 1…9 in paste mode.
+fn quick_index(key: gdk4::Key, alt: bool, paste_mode: bool) -> Option<usize> {
     use gdk4::Key;
-    if !alt && in_search {
+    if !alt && !paste_mode {
         return None;
     }
     const DIGITS: [(Key, Key); 9] = [
@@ -1091,6 +1137,18 @@ fn has_focus_within(widget: &impl IsA<gtk4::Widget>) -> bool {
         .root()
         .and_then(|r| r.focus())
         .is_some_and(|f| &f == widget || f.is_ancestor(widget))
+}
+
+/// True when keyboard focus is inside a popover of `window`.
+fn focus_in_popover(window: &Window) -> bool {
+    let mut w = gtk4::prelude::RootExt::focus(window);
+    while let Some(widget) = w {
+        if widget.is::<gtk4::Popover>() {
+            return true;
+        }
+        w = widget.parent();
+    }
+    false
 }
 
 /// Show/hide the "1"…"9" badges on the first rows (while Alt is held).
@@ -1232,14 +1290,21 @@ mod tests {
     #[test]
     fn quick_paste_keys() {
         use gdk4::Key;
-        assert_eq!(quick_index(Key::_1, true, true), Some(0));
-        assert_eq!(quick_index(Key::_9, true, false), Some(8));
-        assert_eq!(quick_index(Key::KP_3, true, true), Some(2));
-        // Plain digits only when not typing in the search box.
-        assert_eq!(quick_index(Key::_4, false, false), Some(3));
-        assert_eq!(quick_index(Key::_4, false, true), None);
-        assert_eq!(quick_index(Key::_0, true, false), None);
-        assert_eq!(quick_index(Key::a, true, false), None);
+        // Alt+digit always pastes.
+        assert_eq!(quick_index(Key::_1, true, false), Some(0));
+        assert_eq!(quick_index(Key::KP_3, true, false), Some(2));
+        // Plain digits paste only while digits are in "paste mode".
+        assert_eq!(quick_index(Key::_4, false, true), Some(3));
+        assert_eq!(quick_index(Key::_4, false, false), None);
+        assert_eq!(quick_index(Key::_0, true, true), None);
+        assert_eq!(quick_index(Key::a, true, true), None);
+    }
+
+    #[test]
+    fn digits_paste_while_search_is_empty_and_not_armed() {
+        assert!(digits_paste("", false));
+        assert!(!digits_paste("ssh", false)); // typing a query: digits are text
+        assert!(!digits_paste("", true)); // Ctrl+K / "/" / click: searching for a number
     }
 
     #[test]

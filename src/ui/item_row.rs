@@ -18,7 +18,7 @@ use crate::ui::format;
 use crate::ui::popup::CloseGuard;
 use crate::ui::preview;
 use crate::ui::icons::{self, Icon};
-use crate::ui::theme::{normalize_color, tag_color, Theme};
+use crate::ui::theme::{normalize_color, tag_color, Theme, COLORS};
 
 /// Longest tooltip preview of a text entry.
 const TOOLTIP_MAX_CHARS: usize = 600;
@@ -97,6 +97,12 @@ pub fn build_item_row(
     if entry.pinned {
         row.add_css_class("pinned");
     }
+    // An explicitly chosen colour tints the whole row (a tag alone only
+    // colours the dot).
+    let tint_hex = color.and_then(|c| COLORS.iter().find(|(n, _)| *n == c).map(|(_, h)| *h));
+    if let Some(c) = color {
+        row.add_css_class(&format!("tint-{c}"));
+    }
 
     let hbox = gtk4::Box::new(Orientation::Horizontal, 8);
     hbox.add_css_class("item-row");
@@ -128,7 +134,8 @@ pub fn build_item_row(
             let tile = gtk4::CenterBox::new();
             tile.add_css_class("kind-tile");
             tile.set_valign(gtk4::Align::Center);
-            tile.set_center_widget(Some(&icons::image(icons::for_kind(kind), &theme.icon, 20)));
+            let icon_color = tint_hex.unwrap_or(theme.icon.as_str());
+            tile.set_center_widget(Some(&icons::image(icons::for_kind(kind), icon_color, 20)));
             hbox.append(&tile);
         }
         ClipboardContent::Image { hash, .. } => {
@@ -153,13 +160,24 @@ pub fn build_item_row(
     title.set_ellipsize(gtk4::pango::EllipsizeMode::End);
     text_box.append(&title);
 
-    let subtitle = Label::new(Some(&format::subtitle(entry)));
+    let subtitle = Label::new(Some(&format::row_subtitle(entry, kind)));
     subtitle.add_css_class("row-subtitle");
     subtitle.set_xalign(0.0);
     subtitle.set_single_line_mode(true);
     subtitle.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-    if let ClipboardContent::Text(t) = &entry.content {
-        subtitle.set_tooltip_text(Some(&tooltip_preview(t)));
+    let mut tooltip = match &entry.content {
+        ClipboardContent::Text(t) => tooltip_preview(t),
+        ClipboardContent::Image { .. } => String::new(),
+    };
+    if let Some(note) = entry.note.as_deref().filter(|n| !n.trim().is_empty()) {
+        if !tooltip.is_empty() {
+            tooltip.push_str("\n\n");
+        }
+        tooltip.push_str(&format!("\u{270e} {}", tooltip_preview(note)));
+    }
+    if !tooltip.is_empty() {
+        subtitle.set_tooltip_text(Some(&tooltip));
+        title.set_tooltip_text(Some(&tooltip));
     }
     text_box.append(&subtitle);
     hbox.append(&text_box);
@@ -257,16 +275,24 @@ pub fn build_item_row(
         preview_btn.connect_clicked(move |_| open());
     }
 
-    let open_editor: Rc<dyn Fn()> = {
+    let open_editor_at: Rc<dyn Fn(bool)> = {
         let row      = row.downgrade();
         let entry    = entry.clone();
         let suppress = Rc::clone(&ctx.suppress_close);
         let cb       = Rc::clone(&on_action);
-        Rc::new(move || {
+        Rc::new(move |focus_note| {
             if let Some(row) = row.upgrade() {
-                editor::show(&row, &entry, &suppress, Rc::clone(&cb));
+                editor::show(&row, &entry, &suppress, Rc::clone(&cb), focus_note);
             }
         })
+    };
+    let open_editor: Rc<dyn Fn()> = {
+        let f = Rc::clone(&open_editor_at);
+        Rc::new(move || f(false))
+    };
+    let open_note: Rc<dyn Fn()> = {
+        let f = Rc::clone(&open_editor_at);
+        Rc::new(move || f(true))
     };
 
     // Context menu: right-click at the pointer, or keyboard at the row.
@@ -281,6 +307,7 @@ pub fn build_item_row(
         let cb    = Rc::clone(&on_action);
         let ui = context_menu::UiHooks {
             edit:    Rc::clone(&open_editor),
+            note:    Rc::clone(&open_note),
             preview: Rc::clone(&open_preview),
         };
         Rc::new(move |point| {

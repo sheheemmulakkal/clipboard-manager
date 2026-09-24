@@ -80,6 +80,7 @@ pub fn show(
                 match choice {
                     Some(Choice::Action(a)) => emit(a),
                     Some(Choice::Edit) => (ui.edit)(),
+                    Some(Choice::Note) => (ui.note)(),
                     Some(Choice::Preview) => (ui.preview)(),
                     None => {}
                 }
@@ -115,6 +116,7 @@ pub fn show(
 #[derive(Clone)]
 pub struct UiHooks {
     pub edit:    Rc<dyn Fn()>,
+    pub note:    Rc<dyn Fn()>,
     pub preview: Rc<dyn Fn()>,
 }
 
@@ -123,11 +125,17 @@ pub struct UiHooks {
 enum Choice {
     Action(RowAction),
     Edit,
+    Note,
     Preview,
 }
 
 fn meta(entry: &ClipboardEntry) -> EntryMeta {
-    EntryMeta { label: entry.label.clone(), color: entry.color.clone(), tag: entry.tag.clone() }
+    EntryMeta {
+        label: entry.label.clone(),
+        color: entry.color.clone(),
+        tag:   entry.tag.clone(),
+        note:  entry.note.clone(),
+    }
 }
 
 fn main_page(entry: &ClipboardEntry, theme: &Theme, stack: &Stack, choose: &Rc<dyn Fn(Choice)>) -> gtk4::Box {
@@ -148,6 +156,13 @@ fn main_page(entry: &ClipboardEntry, theme: &Theme, stack: &Stack, choose: &Rc<d
         edit.connect_clicked(move |_| choose(Choice::Edit));
     }
     page.append(&edit);
+    let has_note = entry.note.as_deref().is_some_and(|n| !n.trim().is_empty());
+    let note = menu_item(Icon::FileText, if has_note { "Edit note\u{2026}" } else { "Add note\u{2026}" }, None, ic);
+    {
+        let choose = Rc::clone(choose);
+        note.connect_clicked(move |_| choose(Choice::Note));
+    }
+    page.append(&note);
     let (pin_icon, pin_label) = if entry.pinned { (Icon::PinFilled, "Unpin") } else { (Icon::Pin, "Pin") };
     page.append(&item(pin_icon, pin_label, Some("Ctrl+P"), RowAction::TogglePin));
     page.append(&submenu_item(Icon::Tag, "Add label", ic, stack, "tags"));

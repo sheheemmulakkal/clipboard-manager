@@ -27,11 +27,44 @@ pub fn relative_time(copied_at: u64, now: u64) -> String {
     }
 }
 
-/// Bold first line of a row: the user's label, or the kind of content.
+fn has_label(e: &ClipboardEntry) -> bool {
+    e.label.as_deref().is_some_and(|l| !l.trim().is_empty())
+}
+
+/// Bold first line of a row: the user's label, else the content itself
+/// (images: "Image" / "Screenshot"). The kind is shown by the icon.
 pub fn title(e: &ClipboardEntry, kind: ContentKind) -> String {
-    match e.label.as_deref().map(str::trim) {
-        Some(l) if !l.is_empty() => l.to_string(),
-        _ => kind.title().to_string(),
+    if has_label(e) {
+        return e.label.as_deref().unwrap_or_default().trim().to_string();
+    }
+    match &e.content {
+        ClipboardContent::Text(_) => subtitle(e),
+        ClipboardContent::Image { .. } => kind.title().to_string(),
+    }
+}
+
+/// Second line of a row: the content (when a label is the title), else the
+/// note (✎), else what kind of text it is and how long.
+pub fn row_subtitle(e: &ClipboardEntry, kind: ContentKind) -> String {
+    if e.is_image() || has_label(e) {
+        return subtitle(e);
+    }
+    if let Some(note) = e.note.as_deref().filter(|n| !n.trim().is_empty()) {
+        let one_line = note.split_whitespace().collect::<Vec<_>>().join(" ");
+        return format!("\u{270e} {}", truncate_chars(&one_line, SUBTITLE_MAX_CHARS));
+    }
+    let lines = match &e.content {
+        ClipboardContent::Text(t) => t.trim_end().lines().count().max(1),
+        ClipboardContent::Image { .. } => 1,
+    };
+    format!("{} \u{00b7} {} {}", kind.title(), lines, if lines == 1 { "line" } else { "lines" })
+}
+
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() > max {
+        s.chars().take(max).collect::<String>() + "\u{2026}"
+    } else {
+        s.to_string()
     }
 }
 
@@ -150,13 +183,29 @@ mod tests {
     }
 
     #[test]
-    fn title_prefers_label_then_kind() {
-        let mut e = ClipboardEntry::new_text(1, "https://x.y".into());
-        assert_eq!(title(&e, ContentKind::Url), "URL");
+    fn title_is_label_else_content() {
+        let mut e = ClipboardEntry::new_text(1, "  https://x.y/a \n more".into());
+        assert_eq!(title(&e, ContentKind::Url), "https://x.y/a more");
         e.label = Some("Docs".into());
         assert_eq!(title(&e, ContentKind::Url), "Docs");
         e.label = Some("  ".into());
-        assert_eq!(title(&e, ContentKind::Url), "URL");
+        assert_eq!(title(&e, ContentKind::Url), "https://x.y/a more");
+        let img = ClipboardEntry::new_image(2, [0; 32], 10, 10);
+        assert_eq!(title(&img, ContentKind::Screenshot), "Screenshot");
+    }
+
+    #[test]
+    fn row_subtitle_shows_content_note_or_meta() {
+        let mut e = ClipboardEntry::new_text(1, "ssh deploy@host".into());
+        assert_eq!(row_subtitle(&e, ContentKind::Shell), "Shell \u{00b7} 1 line");
+        e.note = Some("needs VPN\npassword in vault".into());
+        assert_eq!(row_subtitle(&e, ContentKind::Shell), "\u{270e} needs VPN password in vault");
+        e.label = Some("Staging login".into());
+        assert_eq!(row_subtitle(&e, ContentKind::Shell), "ssh deploy@host");
+        let multi = ClipboardEntry::new_text(2, "a\nb\nc".into());
+        assert_eq!(row_subtitle(&multi, ContentKind::Text), "Text \u{00b7} 3 lines");
+        let img = ClipboardEntry::new_image(3, [0; 32], 1920, 1080);
+        assert_eq!(row_subtitle(&img, ContentKind::Image), "1920 \u{00d7} 1080 \u{2022} PNG");
     }
 
     #[test]
