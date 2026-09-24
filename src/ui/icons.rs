@@ -10,7 +10,6 @@ use std::collections::HashMap;
 
 use gdk_pixbuf::prelude::*;
 use gdk4::subclass::prelude::ObjectSubclassIsExt;
-use glib::prelude::*;
 use gtk4::prelude::WidgetExt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

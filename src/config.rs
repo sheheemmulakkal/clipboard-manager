@@ -11,7 +11,6 @@ fn default_show_timestamps() -> bool { true }
 fn default_deduplicate() -> bool { true }
 fn default_popup_follow_cursor() -> bool { true }
 fn default_clear_undo_timeout_secs() -> u64 { 5 }
-fn default_nerd_font() -> bool { false }
 fn default_max_text_bytes() -> usize { 1024 * 1024 }
 
 // ── SizeConfig defaults ───────────────────────────────────────────────────────
@@ -126,10 +125,6 @@ pub struct AppConfig {
     pub popup_follow_cursor: bool,
     #[serde(default = "default_clear_undo_timeout_secs")]
     pub clear_undo_timeout_secs: u64,
-    /// Use Nerd Font icons for action buttons. Requires a Nerd Font to be
-    /// installed and set as the application font. Default: false.
-    #[serde(default = "default_nerd_font")]
-    pub nerd_font: bool,
     /// Texts larger than this many bytes are not recorded. Default: 1 MiB.
     #[serde(default = "default_max_text_bytes")]
     pub max_text_bytes: usize,
@@ -153,7 +148,6 @@ impl Default for AppConfig {
             deduplicate:             default_deduplicate(),
             popup_follow_cursor:     default_popup_follow_cursor(),
             clear_undo_timeout_secs: default_clear_undo_timeout_secs(),
-            nerd_font:               default_nerd_font(),
             max_text_bytes:          default_max_text_bytes(),
             colors:                  ColorConfig::default(),
             sizes:                   SizeConfig::default(),

@@ -14,7 +14,7 @@ use crate::config::{AppConfig, ThemeName};
 use crate::events::{MenuAction, PopupEvent, RowAction};
 use crate::platform::Platform;
 use crate::ui::icons::{self, Icon};
-use crate::ui::item_row::build_item_row;
+use crate::ui::item_row::{build_item_row, RowContext};
 use crate::ui::style::generate_css;
 use crate::ui::theme::Theme;
 
@@ -65,6 +65,7 @@ pub struct ClipboardPopup {
     search_entry:        SearchEntry,
     suppress_close:      Rc<Cell<u32>>,
     size:                (i32, i32),
+    screen_sizes:        Rc<Vec<(u32, u32)>>,
 }
 
 impl ClipboardPopup {
@@ -487,6 +488,7 @@ impl ClipboardPopup {
             undo_bar, undo_label, undo_pending, undo_tick,
             platform, theme, show_timestamps: config.show_timestamps,
             search_entry, suppress_close, size,
+            screen_sizes: Rc::new(monitor_sizes(&display)),
         }
     }
 
@@ -515,11 +517,18 @@ impl ClipboardPopup {
         let mut ids = self.row_ids.borrow_mut();
         ids.clear();
 
+        let ctx = RowContext {
+            theme:           Rc::clone(&self.theme),
+            show_timestamps: self.show_timestamps,
+            suppress_close:  Rc::clone(&self.suppress_close),
+            now:             crate::clipboard::entry::now_secs(),
+            screen_sizes:    Rc::clone(&self.screen_sizes),
+        };
         for entry in entries {
             ids.push(entry.id);
             let id = entry.id;
             let h  = self.handler.clone();
-            let row = build_item_row(entry, false, Rc::clone(&self.suppress_close), move |action| {
+            let row = build_item_row(entry, &ctx, move |action| {
                 h.emit(PopupEvent::Row(id, action));
             });
             self.list_box.append(&row);
@@ -753,6 +762,19 @@ fn icon_button(icon: Icon, color: &str, px: i32, class: &str) -> Button {
     b.set_child(Some(&icons::image(icon, color, px)));
     b.set_valign(gtk4::Align::Center);
     b
+}
+
+/// Monitor sizes in device pixels (what a full-screen screenshot measures).
+fn monitor_sizes(display: &gdk4::Display) -> Vec<(u32, u32)> {
+    let monitors = display.monitors();
+    (0..monitors.n_items())
+        .filter_map(|i| monitors.item(i).and_downcast::<gdk4::Monitor>())
+        .map(|m| {
+            let g = m.geometry();
+            let s = m.scale_factor().max(1);
+            ((g.width() * s) as u32, (g.height() * s) as u32)
+        })
+        .collect()
 }
 
 fn rgba_hex(c: &gdk4::RGBA) -> String {

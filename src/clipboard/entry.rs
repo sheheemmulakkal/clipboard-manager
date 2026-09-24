@@ -56,18 +56,6 @@ impl ClipboardEntry {
         }
     }
 
-    pub fn preview(&self) -> String {
-        match &self.content {
-            ClipboardContent::Text(t) => {
-                let end = t.char_indices().nth(80).map(|(i, _)| i).unwrap_or(t.len());
-                t[..end].to_string()
-            }
-            ClipboardContent::Image { width, height, .. } => {
-                format!("Image {width}\u{00d7}{height}")
-            }
-        }
-    }
-
     #[allow(dead_code)]
     pub fn as_text(&self) -> Option<&str> {
         if let ClipboardContent::Text(t) = &self.content { Some(t) } else { None }

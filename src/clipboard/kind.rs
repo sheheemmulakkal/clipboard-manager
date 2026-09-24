@@ -16,6 +16,8 @@ pub enum ContentKind {
     Screenshot,
 }
 
+const DETECT_MAX_BYTES: usize = 4096;
+
 /// First words that make a single line look like a shell command.
 const SHELL_COMMANDS: &[&str] = &[
     "apt", "cargo", "cat", "cd", "chmod", "chown", "cp", "curl", "docker", "echo", "export",
@@ -37,7 +39,13 @@ const SECRET_PREFIXES: &[&str] = &[
 
 impl ContentKind {
     pub fn detect(text: &str) -> ContentKind {
-        let t = text.trim();
+        // The first few KB are plenty to classify, and keep this cheap for
+        // megabyte-sized clipboard contents.
+        let mut end = text.len().min(DETECT_MAX_BYTES);
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        let t = text[..end].trim();
         if t.is_empty() {
             return ContentKind::Text;
         }
