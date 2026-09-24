@@ -1,6 +1,5 @@
 use anyhow::Result;
 use serde::Deserialize;
-use std::path::PathBuf;
 
 // ── AppConfig defaults ────────────────────────────────────────────────────────
 
@@ -141,7 +140,7 @@ impl Default for AppConfig {
 
 impl AppConfig {
     pub fn load() -> Result<Self> {
-        let path = Self::config_path();
+        let path = crate::paths::config_file();
         if path.exists() {
             let text = std::fs::read_to_string(&path)?;
             let config: AppConfig = toml::from_str(&text)?;
@@ -158,13 +157,5 @@ impl AppConfig {
             })();
             Ok(AppConfig::default())
         }
-    }
-
-    fn config_path() -> PathBuf {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        PathBuf::from(home)
-            .join(".config")
-            .join("clipboard-manager")
-            .join("config.toml")
     }
 }

@@ -111,12 +111,7 @@ pub fn build_item_row(
             text_box.append(&badge);
 
             // Thumbnail (pre-generated at capture time)
-            let hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
-            let thumb_path = dirs::data_dir()
-                .unwrap_or_else(|| std::path::PathBuf::from("."))
-                .join("clipboard-manager")
-                .join("images")
-                .join(format!("{hex}_thumb.png"));
+            let thumb_path = crate::paths::thumb_path(hash);
 
             let picture = gtk4::Picture::for_filename(&thumb_path);
             picture.set_can_shrink(true);

@@ -2,6 +2,7 @@ mod app;
 mod clipboard;
 mod config;
 mod hotkey;
+mod paths;
 mod platform;
 mod store;
 mod ui;

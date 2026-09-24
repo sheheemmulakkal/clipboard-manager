@@ -11,6 +11,7 @@ use crate::clipboard::entry::{ClipboardContent, ClipboardEntry};
 use crate::clipboard::monitor::ClipboardMonitor;
 use crate::config::AppConfig;
 use crate::hotkey;
+use crate::paths;
 use crate::platform;
 #[cfg(not(feature = "persist"))]
 use crate::store::memory::MemoryStore;
@@ -37,11 +38,7 @@ impl App {
             #[cfg(feature = "persist")]
             {
                 use crate::store::persistent::PersistentStore;
-                let path = dirs::data_dir()
-                    .unwrap_or_else(|| std::path::PathBuf::from("."))
-                    .join("clipboard-manager")
-                    .join("history.bin");
-                Box::new(PersistentStore::load(config.max_history, config.deduplicate, path))
+                Box::new(PersistentStore::load(config.max_history, config.deduplicate, paths::history_file()))
             }
             #[cfg(not(feature = "persist"))]
             {
@@ -50,10 +47,7 @@ impl App {
         };
         let store = Rc::new(RefCell::new(store));
 
-        let image_dir = dirs::data_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("clipboard-manager")
-            .join("images");
+        let image_dir = paths::image_dir();
 
         // Startup GC: delete image files not referenced by any current store entry.
         gc_image_files(&image_dir, &store.borrow());
@@ -448,7 +442,7 @@ fn set_clipboard_content(content: &ClipboardContent, image_dir: &std::path::Path
             display.clipboard().set_text(t);
         }
         ClipboardContent::Image { hash, .. } => {
-            let hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
+            let hex = paths::hex(hash);
             let full_path = image_dir.join(format!("{hex}.png"));
             let gio_file = gdk4::gio::File::for_path(&full_path);
             match gdk4::Texture::from_file(&gio_file) {
@@ -465,7 +459,7 @@ fn gc_image_files(image_dir: &std::path::Path, store: &Box<dyn Store>) {
     let hashes: HashSet<String> = store.get_all().iter()
         .filter_map(|e| {
             if let ClipboardContent::Image { hash, .. } = &e.content {
-                Some(hash.iter().map(|b| format!("{b:02x}")).collect())
+                Some(paths::hex(hash))
             } else {
                 None
             }

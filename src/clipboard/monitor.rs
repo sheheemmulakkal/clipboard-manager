@@ -30,15 +30,7 @@ impl ClipboardMonitor {
         let on_change       = Rc::new(on_change);
 
         // Compute the images/ dir once at startup and ensure it exists.
-        let image_dir: Rc<PathBuf> = Rc::new(
-            dirs::data_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join("clipboard-manager")
-                .join("images"),
-        );
-        if let Err(e) = std::fs::create_dir_all(image_dir.as_ref()) {
-            tracing::warn!("[monitor] cannot create image dir: {e}");
-        }
+        let image_dir: Rc<PathBuf> = Rc::new(crate::paths::image_dir());
 
         // GDK clipboard is backend-agnostic: works on both X11 and Wayland.
         let clipboard = gdk4::Display::default()
@@ -144,9 +136,7 @@ impl ClipboardMonitor {
                                 return;
                             }
 
-                            let hex: String = hash.iter()
-                                .map(|b| format!("{b:02x}"))
-                                .collect();
+                            let hex = crate::paths::hex(&hash);
 
                             let full_path  = image_dir.join(format!("{hex}.png"));
                             let thumb_path = image_dir.join(format!("{hex}_thumb.png"));
