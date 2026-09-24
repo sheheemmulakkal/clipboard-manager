@@ -49,6 +49,8 @@ pub struct RowHooks {
     pub open_menu:   Rc<dyn Fn()>,
     /// Open the editor (Ctrl+E).
     pub open_editor: Rc<dyn Fn()>,
+    /// Show the quick-paste number instead of the colour dot (Alt held).
+    pub show_quick_index: Rc<dyn Fn(bool)>,
 }
 
 /// Kind of an entry, including images/screenshots.
@@ -67,6 +69,7 @@ pub fn entry_kind(entry: &ClipboardEntry, screen_sizes: &[(u32, u32)]) -> Conten
 
 pub fn build_item_row(
     entry:     &ClipboardEntry,
+    index:     usize,
     ctx:       &RowContext,
     on_action: impl Fn(RowAction) + 'static,
 ) -> ItemRow {
@@ -89,6 +92,20 @@ pub fn build_item_row(
     dot.add_css_class(&format!("dot-{}", color.unwrap_or("none")));
     dot.set_valign(gtk4::Align::Center);
     hbox.append(&dot);
+
+    // Quick-paste number ("1"…"9"), shown in place of the dot while Alt is held.
+    let badge = Label::new(Some(&(index + 1).to_string()));
+    badge.add_css_class("quick-index");
+    badge.set_valign(gtk4::Align::Center);
+    badge.set_visible(false);
+    hbox.append(&badge);
+    let show_quick_index: Rc<dyn Fn(bool)> = {
+        let dot = dot.clone();
+        Rc::new(move |on| {
+            badge.set_visible(on);
+            dot.set_visible(!on);
+        })
+    };
 
     // ── Kind tile or thumbnail ──────────────────────────────────────────
     match &entry.content {
@@ -238,7 +255,7 @@ pub fn build_item_row(
     }
     let open_menu: Rc<dyn Fn()> = Rc::new(move || open_menu_at(None));
 
-    ItemRow { row, hooks: RowHooks { open_menu, open_editor } }
+    ItemRow { row, hooks: RowHooks { open_menu, open_editor, show_quick_index } }
 }
 
 fn row_button(icon: Icon, color: &str, tooltip: &str) -> Button {

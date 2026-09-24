@@ -343,6 +343,7 @@ impl ClipboardPopup {
                 use glib::Propagation;
                 let ctrl  = mods.contains(gdk4::ModifierType::CONTROL_MASK);
                 let shift = mods.contains(gdk4::ModifierType::SHIFT_MASK);
+                let alt   = mods.contains(gdk4::ModifierType::ALT_MASK);
                 let in_search = has_focus_within(&se);
                 let selected = || lb.selected_row().map(|r| r.index() as usize);
                 let selected_id = || selected().and_then(|i| ids.borrow().get(i).copied());
@@ -352,6 +353,19 @@ impl ClipboardPopup {
                     }
                     Propagation::Stop
                 };
+                if key == gdk4::Key::Alt_L || key == gdk4::Key::Alt_R {
+                    show_quick_badges(&hooks.borrow(), true);
+                    return Propagation::Proceed;
+                }
+                if !ctrl {
+                    if let Some(i) = quick_index(key, alt, in_search) {
+                        let id = ids.borrow().get(i).copied();
+                        if let Some(id) = id {
+                            h.emit(PopupEvent::Row(id, RowAction::Paste));
+                        }
+                        return Propagation::Stop;
+                    }
+                }
                 match key {
                     // Shortcuts on the selected row (not while typing a query).
                     k if k == gdk4::Key::Delete && !in_search => row_action(RowAction::Remove),
@@ -435,6 +449,14 @@ impl ClipboardPopup {
                     _ => Propagation::Proceed,
                 }
             });
+            {
+                let hooks = Rc::clone(&row_hooks);
+                key_ctrl.connect_key_released(move |_, key, _, _| {
+                    if key == gdk4::Key::Alt_L || key == gdk4::Key::Alt_R {
+                        show_quick_badges(&hooks.borrow(), false);
+                    }
+                });
+            }
             window.add_controller(key_ctrl);
         }
 
@@ -571,11 +593,11 @@ impl ClipboardPopup {
             screen_sizes:    Rc::clone(&self.screen_sizes),
             tags:            Rc::new(tags),
         };
-        for entry in entries {
+        for (index, entry) in entries.iter().enumerate() {
             ids.push(entry.id);
             let id = entry.id;
             let h  = self.handler.clone();
-            let item = build_item_row(entry, &ctx, move |action| {
+            let item = build_item_row(entry, index, &ctx, move |action| {
                 h.emit(PopupEvent::Row(id, action));
             });
             hooks.push(item.hooks);
@@ -887,6 +909,21 @@ fn restored_selection(previous: Option<usize>, len: usize) -> Option<usize> {
     previous.filter(|_| len > 0).map(|i| i.min(len - 1))
 }
 
+/// Row index for a quick-paste key: Alt+1…9 anywhere, or 1…9 when the
+/// search box doesn't have focus.
+fn quick_index(key: gdk4::Key, alt: bool, in_search: bool) -> Option<usize> {
+    use gdk4::Key;
+    if !alt && in_search {
+        return None;
+    }
+    const DIGITS: [(Key, Key); 9] = [
+        (Key::_1, Key::KP_1), (Key::_2, Key::KP_2), (Key::_3, Key::KP_3),
+        (Key::_4, Key::KP_4), (Key::_5, Key::KP_5), (Key::_6, Key::KP_6),
+        (Key::_7, Key::KP_7), (Key::_8, Key::KP_8), (Key::_9, Key::KP_9),
+    ];
+    DIGITS.iter().position(|(d, kp)| key == *d || key == *kp)
+}
+
 /// The scroll-to-top button shows once the list is scrolled past one row.
 fn scroll_top_visible(value: f64, row_height: u32) -> bool {
     value > row_height as f64
@@ -932,6 +969,13 @@ fn has_focus_within(widget: &impl IsA<gtk4::Widget>) -> bool {
         .is_some_and(|f| &f == widget || f.is_ancestor(widget))
 }
 
+/// Show/hide the "1"…"9" badges on the first rows (while Alt is held).
+fn show_quick_badges(hooks: &[RowHooks], visible: bool) {
+    for h in hooks.iter().take(9) {
+        (h.show_quick_index)(visible);
+    }
+}
+
 fn cancel_tick(ut: &Rc<RefCell<Option<glib::SourceId>>>) {
     if let Some(id) = ut.borrow_mut().take() { id.remove(); }
 }
@@ -974,6 +1018,19 @@ mod tests {
         assert_eq!(restored_selection(Some(4), 4), Some(3)); // last row deleted
         assert_eq!(restored_selection(Some(0), 0), None);
         assert_eq!(restored_selection(None, 3), None);
+    }
+
+    #[test]
+    fn quick_paste_keys() {
+        use gdk4::Key;
+        assert_eq!(quick_index(Key::_1, true, true), Some(0));
+        assert_eq!(quick_index(Key::_9, true, false), Some(8));
+        assert_eq!(quick_index(Key::KP_3, true, true), Some(2));
+        // Plain digits only when not typing in the search box.
+        assert_eq!(quick_index(Key::_4, false, false), Some(3));
+        assert_eq!(quick_index(Key::_4, false, true), None);
+        assert_eq!(quick_index(Key::_0, true, false), None);
+        assert_eq!(quick_index(Key::a, true, false), None);
     }
 
     #[test]
