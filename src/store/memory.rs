@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use crate::clipboard::entry::{ClipboardContent, ClipboardEntry};
+use crate::clipboard::entry::{now_secs, ClipboardContent, ClipboardEntry, EntryMeta};
 use crate::store::Store;
 
 pub struct MemoryStore {
@@ -31,11 +31,14 @@ impl Store for MemoryStore {
     fn add(&mut self, entry: ClipboardEntry) {
         self.next_id = self.next_id.max(entry.id + 1);
         if self.deduplicate {
-            let dupe = match &entry.content {
-                ClipboardContent::Text(t) => self.contains_text(t),
-                ClipboardContent::Image { hash, .. } => self.contains_image_hash(hash),
-            };
-            if dupe { return; }
+            let existing = self.entries.iter().position(|e| same_content(&e.content, &entry.content));
+            if let Some(pos) = existing {
+                if let Some(mut old) = self.entries.remove(pos) {
+                    old.copied_at = entry.copied_at.max(old.copied_at);
+                    self.entries.push_back(old);
+                }
+                return;
+            }
         }
         if self.entries.len() >= self.max_history {
             if let Some(pos) = self.entries.iter().position(|e| !e.pinned) {
@@ -53,10 +56,23 @@ impl Store for MemoryStore {
         }
     }
 
-    fn set_label(&mut self, id: u64, label: Option<String>, color: Option<String>) {
+    fn get(&self, id: u64) -> Option<&ClipboardEntry> {
+        self.entries.iter().find(|e| e.id == id)
+    }
+
+    fn touch(&mut self, id: u64) {
+        if let Some(pos) = self.entries.iter().position(|e| e.id == id) {
+            if let Some(mut e) = self.entries.remove(pos) {
+                e.copied_at = now_secs().max(e.copied_at);
+                self.entries.push_back(e);
+            }
+        }
+    }
+
+    fn set_meta(&mut self, id: u64, meta: EntryMeta) {
         if let Some(e) = self.entries.iter_mut().find(|e| e.id == id) {
-            e.label = label;
-            e.color = color;
+            e.label = meta.label;
+            e.color = meta.color;
         }
     }
 
@@ -106,6 +122,14 @@ impl Store for MemoryStore {
 
     fn len(&self) -> usize {
         self.entries.len()
+    }
+}
+
+fn same_content(a: &ClipboardContent, b: &ClipboardContent) -> bool {
+    match (a, b) {
+        (ClipboardContent::Text(x), ClipboardContent::Text(y)) => x == y,
+        (ClipboardContent::Image { hash: x, .. }, ClipboardContent::Image { hash: y, .. }) => x == y,
+        _ => false,
     }
 }
 
@@ -197,6 +221,79 @@ mod tests {
         store.restore(vec![a, b, c]);
         let ids: Vec<u64> = store.get_all().iter().map(|e| e.id).collect();
         assert_eq!(ids, vec![2, 3]); // oldest (1) evicted, 3 not duplicated
+    }
+
+    #[test]
+    fn recopy_moves_to_top_and_keeps_meta() {
+        let mut s = MemoryStore::new(10, true);
+        let mut a = make_text(1, "a");
+        a.copied_at = 100;
+        a.label = Some("L".into());
+        a.color = Some("red".into());
+        a.pinned = true;
+        s.add(a);
+        let mut b = make_text(2, "b");
+        b.copied_at = 200;
+        s.add(b);
+        let mut again = make_text(3, "a");
+        again.copied_at = 300;
+        s.add(again);
+        let all = s.get_all();
+        assert_eq!(all.len(), 2);
+        let last = all.last().unwrap();
+        assert_eq!(last.id, 1);
+        assert_eq!(last.copied_at, 300);
+        assert!(last.pinned);
+        assert_eq!(last.label.as_deref(), Some("L"));
+        assert_eq!(last.color.as_deref(), Some("red"));
+    }
+
+    #[test]
+    fn recopy_image_moves_to_top() {
+        let mut s = MemoryStore::new(10, true);
+        let mut img = ClipboardEntry::new_image(1, [9; 32], 4, 4);
+        img.copied_at = 100;
+        s.add(img);
+        let mut t = make_text(2, "t");
+        t.copied_at = 200;
+        s.add(t);
+        let mut again = ClipboardEntry::new_image(3, [9; 32], 4, 4);
+        again.copied_at = 300;
+        s.add(again);
+        let ids: Vec<u64> = s.get_all().iter().map(|e| e.id).collect();
+        assert_eq!(ids, vec![2, 1]);
+        assert_eq!(s.get(1).unwrap().copied_at, 300);
+    }
+
+    #[test]
+    fn touch_moves_to_top() {
+        let mut s = MemoryStore::new(10, true);
+        let mut a = make_text(1, "a");
+        a.copied_at = 100;
+        s.add(a);
+        s.add(make_text(2, "b"));
+        s.touch(1);
+        let all = s.get_all();
+        assert_eq!(all.last().unwrap().id, 1);
+        assert!(all.last().unwrap().copied_at > 100);
+    }
+
+    #[test]
+    fn dedup_disabled_keeps_duplicates() {
+        let mut s = MemoryStore::new(10, false);
+        s.add(make_text(1, "a"));
+        s.add(make_text(2, "a"));
+        assert_eq!(s.len(), 2);
+    }
+
+    #[test]
+    fn recopy_at_capacity_does_not_evict() {
+        let mut s = MemoryStore::new(2, true);
+        s.add(make_text(1, "a"));
+        s.add(make_text(2, "b"));
+        s.add(make_text(3, "a"));
+        let ids: Vec<u64> = s.get_all().iter().map(|e| e.id).collect();
+        assert_eq!(ids, vec![2, 1]);
     }
 
     #[test]

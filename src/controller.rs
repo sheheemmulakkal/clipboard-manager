@@ -90,7 +90,14 @@ impl Controller {
     }
 
     fn entry(&self, id: u64) -> Option<ClipboardEntry> {
-        self.store.borrow().get_all().into_iter().find(|e| e.id == id).cloned()
+        self.store.borrow().get(id).cloned()
+    }
+
+    /// The user re-used an entry: put it on the clipboard and move it to the
+    /// top. (The monitor ignores our own clipboard changes.)
+    fn use_entry(&self, entry: &ClipboardEntry) {
+        set_clipboard_content(&entry.content);
+        self.store.borrow_mut().touch(entry.id);
     }
 
     fn handle_row(&self, id: u64, action: RowAction) {
@@ -98,7 +105,7 @@ impl Controller {
         match action {
             RowAction::Paste => {
                 let Some(entry) = self.entry(id) else { return };
-                set_clipboard_content(&entry.content);
+                self.use_entry(&entry);
                 self.hide_and_paste(false);
             }
             RowAction::PasteTerminal => {
@@ -106,12 +113,13 @@ impl Controller {
                 if !matches!(entry.content, ClipboardContent::Text(_)) {
                     return;
                 }
-                set_clipboard_content(&entry.content);
+                self.use_entry(&entry);
                 self.hide_and_paste(true);
             }
             RowAction::Copy => {
                 if let Some(entry) = self.entry(id) {
-                    set_clipboard_content(&entry.content);
+                    self.use_entry(&entry);
+                    self.refresh();
                 }
             }
             RowAction::Remove => {
@@ -124,7 +132,7 @@ impl Controller {
                 self.refresh();
             }
             RowAction::SetMeta(meta) => {
-                self.store.borrow_mut().set_label(id, meta.label, meta.color);
+                self.store.borrow_mut().set_meta(id, meta);
                 self.refresh();
             }
         }

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::clipboard::entry::ClipboardEntry;
+use crate::clipboard::entry::{ClipboardEntry, EntryMeta};
 use crate::store::engine::PersistenceEngine;
 use crate::store::memory::MemoryStore;
 use crate::store::Store;
@@ -54,8 +54,17 @@ impl Store for PersistentStore {
         self.flush();
     }
 
-    fn set_label(&mut self, id: u64, label: Option<String>, color: Option<String>) {
-        self.inner.set_label(id, label, color);
+    fn get(&self, id: u64) -> Option<&ClipboardEntry> {
+        self.inner.get(id)
+    }
+
+    fn touch(&mut self, id: u64) {
+        self.inner.touch(id);
+        self.flush();
+    }
+
+    fn set_meta(&mut self, id: u64, meta: EntryMeta) {
+        self.inner.set_meta(id, meta);
         self.flush();
     }
 

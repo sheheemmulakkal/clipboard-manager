@@ -78,8 +78,11 @@ impl ClipboardMonitor {
 
 fn on_clipboard_changed(clipboard: &gdk4::Clipboard, state: &Rc<State>) {
     // Our own set_text / set_texture (the user picked an item in the popup).
-    // The controller records that itself.
+    // The controller records that itself. Forget the last-seen content so
+    // copying it again from another app still moves it to the top.
     if clipboard.is_local() {
+        state.last_text.borrow_mut().clear();
+        *state.last_image_hash.borrow_mut() = None;
         return;
     }
 
@@ -126,6 +129,7 @@ fn capture_text(state: &State, text: String) {
             *state.last_text.borrow_mut() = text;
         }
         TextDecision::Capture => {
+            *state.last_image_hash.borrow_mut() = None;
             let preview: String = text.chars().take(60).collect();
             tracing::debug!("[monitor] captured: {:?}", preview);
             *state.last_text.borrow_mut() = text.clone();
@@ -175,10 +179,16 @@ fn capture_image(state: &State, texture: &gdk4::Texture) {
         let _ = std::fs::remove_file(&tmp_path);
         return;
     }
-    // Store already contains this image
+    *state.last_image_hash.borrow_mut() = Some(hash);
+    state.last_text.borrow_mut().clear();
+
+    // Store already has this image: `add` below moves it to the top.
     if state.store.borrow().contains_image_hash(&hash) {
         let _ = std::fs::remove_file(&tmp_path);
-        *state.last_image_hash.borrow_mut() = Some(hash);
+        let id = state.store.borrow_mut().next_id();
+        state.store.borrow_mut().add(ClipboardEntry::new_image(id, hash, w as u32, h as u32));
+        tracing::debug!("[monitor] re-copied image {}", crate::paths::hex(&hash));
+        (state.on_change)();
         return;
     }
 
@@ -201,8 +211,6 @@ fn capture_image(state: &State, texture: &gdk4::Texture) {
         }
         Err(e) => tracing::warn!("[monitor] thumb scale failed: {e}"),
     }
-
-    *state.last_image_hash.borrow_mut() = Some(hash);
 
     let id = state.store.borrow_mut().next_id();
     state.store.borrow_mut().add(ClipboardEntry::new_image(id, hash, w as u32, h as u32));
