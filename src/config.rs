@@ -1,18 +1,32 @@
 use anyhow::Result;
 use serde::Deserialize;
-use std::path::PathBuf;
 
 // ── AppConfig defaults ────────────────────────────────────────────────────────
 
 fn default_max_history() -> usize { 50 }
 fn default_hotkey() -> String { "ctrl+alt+c".to_string() }
-fn default_popup_width() -> i32 { 420 }
-fn default_popup_max_items() -> usize { 20 }
+fn default_popup_width() -> i32 { 440 }
+fn default_popup_height() -> i32 { 560 }
 fn default_show_timestamps() -> bool { true }
 fn default_deduplicate() -> bool { true }
 fn default_popup_follow_cursor() -> bool { true }
 fn default_clear_undo_timeout_secs() -> u64 { 5 }
-fn default_nerd_font() -> bool { false }
+fn default_max_text_bytes() -> usize { 1024 * 1024 }
+
+/// Largest text the history file stores; `max_text_bytes` is capped to it
+/// (anything bigger would be dropped when the history is loaded again).
+pub const MAX_TEXT_BYTES_LIMIT: usize = 10 * 1024 * 1024;
+fn default_tray_icon() -> bool { true }
+fn default_expire_after_days() -> u64 { 0 }
+fn default_ignore_apps() -> Vec<String> {
+    [
+        "keepassxc", "org.keepassxc.KeePassXC", "1password", "bitwarden", "Enpass",
+        "seahorse", "gnome-keyring", "kwalletmanager5", "kwalletmanager",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
 
 // ── SizeConfig defaults ───────────────────────────────────────────────────────
 
@@ -21,7 +35,21 @@ fn default_font_time() -> u32 { 11 }
 fn default_font_title() -> u32 { 13 }
 fn default_font_buttons() -> u32 { 13 }
 fn default_font_undo() -> u32 { 12 }
-fn default_row_height() -> u32 { 44 }
+fn default_row_height() -> u32 { 56 }
+
+// ── Theme ─────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, Clone, Copy, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeName {
+    /// Built-in dark theme (default).
+    #[default]
+    Dark,
+    /// Built-in light theme.
+    Light,
+    /// Follow the active GTK theme.
+    System,
+}
 
 // ── Color overrides ───────────────────────────────────────────────────────────
 
@@ -70,7 +98,7 @@ pub struct SizeConfig {
     /// Undo bar text. Default: 12.
     #[serde(default = "default_font_undo")]
     pub font_undo: u32,
-    /// Minimum row height in px. Default: 44.
+    /// Minimum row height in px. Default: 56.
     #[serde(default = "default_row_height")]
     pub row_height: u32,
 }
@@ -90,17 +118,19 @@ impl Default for SizeConfig {
 
 // ── AppConfig ─────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct AppConfig {
     #[serde(default = "default_max_history")]
     pub max_history: usize,
     #[serde(default = "default_hotkey")]
     pub hotkey: String,
+    /// `"dark"` (default), `"light"` or `"system"` (follow the GTK theme).
+    #[serde(default)]
+    pub theme: ThemeName,
     #[serde(default = "default_popup_width")]
     pub popup_width: i32,
-    #[serde(default = "default_popup_max_items")]
-    pub popup_max_items: usize,
+    #[serde(default = "default_popup_height")]
+    pub popup_height: i32,
     #[serde(default = "default_show_timestamps")]
     pub show_timestamps: bool,
     #[serde(default = "default_deduplicate")]
@@ -109,10 +139,19 @@ pub struct AppConfig {
     pub popup_follow_cursor: bool,
     #[serde(default = "default_clear_undo_timeout_secs")]
     pub clear_undo_timeout_secs: u64,
-    /// Use Nerd Font icons for action buttons. Requires a Nerd Font to be
-    /// installed and set as the application font. Default: false.
-    #[serde(default = "default_nerd_font")]
-    pub nerd_font: bool,
+    /// Apps whose copies are never recorded (X11 WM_CLASS, case-insensitive).
+    /// Default: common password managers.
+    #[serde(default = "default_ignore_apps")]
+    pub ignore_apps: Vec<String>,
+    /// Delete unpinned items older than this many days. 0 = keep forever.
+    #[serde(default = "default_expire_after_days")]
+    pub expire_after_days: u64,
+    /// Show an icon in the system tray. Default: true.
+    #[serde(default = "default_tray_icon")]
+    pub tray_icon: bool,
+    /// Texts larger than this many bytes are not recorded. Default: 1 MiB.
+    #[serde(default = "default_max_text_bytes")]
+    pub max_text_bytes: usize,
     /// Optional color overrides. Unset fields use the active GTK4 system theme.
     #[serde(default)]
     pub colors: ColorConfig,
@@ -126,13 +165,17 @@ impl Default for AppConfig {
         Self {
             max_history:             default_max_history(),
             hotkey:                  default_hotkey(),
+            theme:                   ThemeName::default(),
             popup_width:             default_popup_width(),
-            popup_max_items:         default_popup_max_items(),
+            popup_height:            default_popup_height(),
             show_timestamps:         default_show_timestamps(),
             deduplicate:             default_deduplicate(),
             popup_follow_cursor:     default_popup_follow_cursor(),
             clear_undo_timeout_secs: default_clear_undo_timeout_secs(),
-            nerd_font:               default_nerd_font(),
+            max_text_bytes:          default_max_text_bytes(),
+            tray_icon:               default_tray_icon(),
+            expire_after_days:       default_expire_after_days(),
+            ignore_apps:             default_ignore_apps(),
             colors:                  ColorConfig::default(),
             sizes:                   SizeConfig::default(),
         }
@@ -140,31 +183,90 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
-    pub fn load() -> Result<Self> {
-        let path = Self::config_path();
-        if path.exists() {
-            let text = std::fs::read_to_string(&path)?;
-            let config: AppConfig = toml::from_str(&text)?;
-            Ok(config)
-        } else {
-            // Write a default config on first run so the user has a file to edit.
-            // Silently ignore write errors (e.g. read-only filesystem).
-            let _ = (|| -> std::io::Result<()> {
-                if let Some(dir) = path.parent() {
-                    std::fs::create_dir_all(dir)?;
-                }
-                std::fs::write(&path, include_str!("../config/default.toml"))?;
-                Ok(())
-            })();
-            Ok(AppConfig::default())
+    /// Write the commented default config to `path`. Errors (e.g. a
+    /// read-only filesystem) are logged, not fatal.
+    pub fn write_default(path: &std::path::Path) {
+        let result = path
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|_| std::fs::write(path, include_str!("../config/default.toml")));
+        if let Err(e) = result {
+            tracing::warn!("[config] cannot write {}: {e}", path.display());
         }
     }
 
-    fn config_path() -> PathBuf {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        PathBuf::from(home)
-            .join(".config")
-            .join("clipboard-manager")
-            .join("config.toml")
+    pub fn from_toml(text: &str) -> Result<Self> {
+        let mut config: AppConfig = toml::from_str(text)?;
+        if config.max_text_bytes > MAX_TEXT_BYTES_LIMIT {
+            tracing::warn!(
+                "[config] max_text_bytes {} is above the {} byte limit — using the limit",
+                config.max_text_bytes,
+                MAX_TEXT_BYTES_LIMIT
+            );
+            config.max_text_bytes = MAX_TEXT_BYTES_LIMIT;
+        }
+        Ok(config)
+    }
+
+    /// Load the user's config. Never fails: on a read or parse error the
+    /// defaults are used and the error text is returned for display.
+    pub fn load() -> (Self, Option<String>) {
+        let path = crate::paths::config_file();
+        if path.exists() {
+            let parsed = std::fs::read_to_string(&path)
+                .map_err(anyhow::Error::from)
+                .and_then(|text| Self::from_toml(&text));
+            match parsed {
+                Ok(config) => (config, None),
+                Err(e) => (
+                    AppConfig::default(),
+                    Some(format!("{}: {e:#}", path.display())),
+                ),
+            }
+        } else {
+            // Write a default config on first run so the user has a file to edit.
+            Self::write_default(&path);
+            (AppConfig::default(), None)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_config_gives_defaults() {
+        let c = AppConfig::from_toml("").unwrap();
+        assert_eq!(c.max_history, 50);
+        assert_eq!(c.hotkey, "ctrl+alt+c");
+    }
+
+    #[test]
+    fn shipped_default_config_matches_built_in_defaults() {
+        let file = AppConfig::from_toml(include_str!("../config/default.toml")).unwrap();
+        let d = AppConfig::default();
+        assert_eq!(file.max_history, d.max_history);
+        assert_eq!(file.hotkey, d.hotkey);
+        assert_eq!(file.theme, d.theme);
+        assert_eq!((file.popup_width, file.popup_height), (d.popup_width, d.popup_height));
+        assert_eq!(file.max_text_bytes, d.max_text_bytes);
+        assert_eq!(file.expire_after_days, d.expire_after_days);
+        assert_eq!(file.ignore_apps, d.ignore_apps);
+        assert_eq!(file.tray_icon, d.tray_icon);
+        assert_eq!(file.clear_undo_timeout_secs, d.clear_undo_timeout_secs);
+    }
+
+    #[test]
+    fn max_text_bytes_is_capped_at_what_history_can_store() {
+        let c = AppConfig::from_toml("max_text_bytes = 50000000").unwrap();
+        assert_eq!(c.max_text_bytes, MAX_TEXT_BYTES_LIMIT);
+        let c = AppConfig::from_toml("max_text_bytes = 2000").unwrap();
+        assert_eq!(c.max_text_bytes, 2000);
+    }
+
+    #[test]
+    fn wrong_type_is_an_error() {
+        assert!(AppConfig::from_toml("max_history = \"oops\"").is_err());
     }
 }

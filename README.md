@@ -1,11 +1,12 @@
 # Clipboard Manager
 
-A clipboard history popup for Ubuntu — press **Ctrl+Alt+C** to see everything
-you've recently copied, and click any item to paste it instantly. Supports both
-**text** and **screenshots / images**.
+A clipboard history popup for Linux — press **Ctrl+Alt+C** to see everything
+you've recently copied and paste any of it instantly. Text and images,
+search, pins, labels, tags and colours. Works on **X11 and Wayland (GNOME)**.
 
-Inspired by the Windows Win+V experience, built natively for Ubuntu with
-Rust and GTK4.
+Built natively with Rust and GTK4.
+
+<p align="center"><img src="docs/screenshot.png" width="464" alt="Clipboard Manager popup"></p>
 
 ## Install
 
@@ -17,247 +18,147 @@ curl -fsSL https://raw.githubusercontent.com/sheheemmulakkal/clipboard-manager/m
 Or download the `.deb` directly from the [Releases page](../../releases/latest).
 
 ### Requirements
-- **Ubuntu 22.04 or newer** (amd64) — GTK4 (which this app is built on) is available by default only on Ubuntu 22.04+
-- X11 or Wayland session
-  - X11: full support (paste, cursor-following popup, hotkey)
-  - Wayland: paste via RemoteDesktop portal, hotkey via GlobalShortcuts portal (requires a compatible compositor e.g. GNOME 43+)
+- **Ubuntu 22.04 or newer** (amd64), or another distribution with GTK 4.6+
+- **X11**: everything works out of the box.
+- **Wayland (GNOME)**: the popup runs on XWayland so the history keeps
+  recording in the background. The hotkey is added as a GNOME keyboard
+  shortcut, and pasting goes through the Remote Desktop portal. GNOME asks
+  **once** for permission to "control" the keyboard, the first time you paste.
 
 ## Usage
 
-1. The app starts automatically after install — no reboot or logout needed
-2. Copy text anywhere as usual
-3. Press **Ctrl+Alt+C** — a popup shows your clipboard history
-4. Interact with any item:
+The app starts automatically after install. Copy as usual, then press
+**Ctrl+Alt+C**.
 
 | Action | How |
 |---|---|
-| **Paste** | Click the item row |
-| **Paste to terminal** | Click the ⌨ button (sends Ctrl+Shift+V) |
-| **Copy only** (no paste) | Click the ⎘ button |
-| **Pin** (keep forever) | Click the ○ / ● button |
-| **Delete** | Click the ✕ button |
-| **Label / color** | Right-click the item row |
-| **Clear all** | Click "Clear All" in the header (with undo) |
-| **Search** | Type in the search bar at the top of the popup |
-| **Keyboard navigation** | ↑ ↓ to move, Enter to paste, Esc to close |
-| **Paste image** | Click an image row — the screenshot is restored to your clipboard and pasted |
+| **Paste** | Click a row, or select it and press **Enter** |
+| **Quick paste** | **1**–**9** right after opening (keycaps show which), or **Alt+1**–**Alt+9** any time |
+| **Search a number** | **Ctrl+K** or **/** first, then type (digits then go into the search) |
+| **Search** | Just type — or **Ctrl+K** / **/** to jump to the search box |
+| **Filter** | Chips under the search box: All · Pinned · Text · Images · Links · Code · your tags |
+| **Preview** | **Space**, or the 👁 button on hover — full text or the whole image |
+| **Copy / paste to terminal / delete** | Buttons appear when you hover over a row |
+| **Pin** (never evicted, listed under **PINNED** at the top) | The pin on the right of a row, or **Ctrl+P** |
+| **Menu** | Right-click a row, **Menu** key or **Shift+F10** |
+| **Edit title, text or note** | Menu → Edit, or **Ctrl+E** |
+| **Note** (longer text, searchable) | Menu → Add note… — shown with ✎ under the item and in Preview |
+| **Tag** (Work, Personal, Security, …) | Menu → Add label |
+| **Colour** | Menu → Change colour — tints the whole row |
+| **Delete** | **Delete** key, hover button, or menu |
+| **Top / bottom** | **Home** / **End**, or the ↑ button that appears when you scroll |
+| **Keep the popup open** | Pin icon in the header |
+| **Pause recording, clear history, settings, quit** | ☰ menu in the header, or the tray icon |
+| **Close** | **Esc** (first Esc clears the search) |
 
-> **Pinned items** are never evicted from history, even when the max history
-> limit is reached. They appear at the top of the list with a colored left border.
+Copying something that is already in the history moves it back to the top —
+no duplicates.
 
-> **Paste to terminal** uses Ctrl+Shift+V, which is the standard paste shortcut
-> in most terminal emulators. Use this instead of a normal click when your
-> target window is a terminal.
+### Privacy
 
-## Item labels and colors
+- The history and images are stored in `~/.local/share/clipboard-manager/`,
+  readable only by you.
+- Passwords copied from password managers that mark them as secret
+  (KeePassXC, KWallet, …) are never recorded.
+- Nothing copied while a password manager window is focused is recorded
+  (`ignore_apps`, X11).
+- **Pause capture** (menu, tray or `clipboard-manager pause`) stops
+  recording until you resume.
 
-Right-click any row to open the label editor:
+## Command line
 
-- **Title** — type a short name for the item (e.g. "API key", "SSH command").
-  The title appears below the preview text in every subsequent popup.
-- **Color** — pick one of 8 Catppuccin Mocha accent colors, or "none".
-  The chosen color appears as a left border on the row so important items
-  stand out at a glance.
-
-Click **Apply** (or press Enter in the title field) to save. Press Escape to
-discard. Right-click the same row again to edit or clear the label.
-
-Labels and colors are stored in the history file and survive restarts.
+```text
+clipboard-manager                start in the background (or open the popup if running)
+clipboard-manager show           open the popup
+clipboard-manager toggle         open or close the popup — bind this to a key on any desktop
+clipboard-manager pause|resume   stop / restart recording
+clipboard-manager clear          remove all unpinned items
+clipboard-manager list [-n N]    print the most recent items
+clipboard-manager reload         restart (re-reads config.toml)
+clipboard-manager quit           stop
+```
 
 ## Screenshots and images
 
-When you copy an image to the clipboard (e.g. via PrtSc, Snipping Tool, or
-any image editor), the clipboard manager captures it automatically:
-
-- A **thumbnail** (240×135) is shown in the popup row instead of text.
-- Clicking the row restores the full screenshot to your clipboard and pastes it.
-- Images are **deduplicated by SHA-256** — copying the same screenshot twice
-  adds only one entry.
-- Full images and thumbnails are stored in
-  `~/.local/share/clipboard-manager/images/` and are **never loaded into RAM**
-  until you paste — only the file path and dimensions are kept in memory.
-- Orphaned image files (whose history entry was evicted) are cleaned up
-  automatically on the next app start.
-- The terminal-paste button is hidden for image rows (terminals can't receive
-  binary clipboard data via Ctrl+Shift+V).
-
-> **Note:** image capture only triggers when the clipboard contains an image
-> and no text. Entries copied from apps that put both image and text on the
-> clipboard (e.g. LibreOffice cells) are captured as text.
-
-## Search
-
-The search bar is always visible at the top of the popup. Start typing to
-filter items by content or label — the filter is case-insensitive and applied
-on top of the pinned-first ordering. Image entries match on `image W×H` or
-their label. Press Esc once to clear the search, and again to close the popup.
+Copied images (screenshots, images from a browser or editor) are captured
+automatically. The popup shows a thumbnail, and pasting puts the full image
+back on the clipboard. Images are deduplicated by SHA-256 and stored as PNG
+files in `~/.local/share/clipboard-manager/images/`. Images larger than 4K
+are skipped.
 
 ## Configuration
 
-Edit `~/.config/clipboard-manager/config.toml` (created with defaults on first run):
+`~/.config/clipboard-manager/config.toml` is created on first run with every
+option documented (☰ → Settings opens it). Apply changes with
+`clipboard-manager reload`.
 
 ```toml
-max_history              = 50
-hotkey                   = "ctrl+alt+c"
-popup_follow_cursor      = true
-clear_undo_timeout_secs  = 5
-deduplicate              = true
-nerd_font                = false   # set true if a Nerd Font is installed
+max_history       = 50
+hotkey            = "ctrl+alt+c"
+theme             = "dark"        # "dark", "light" or "system"
+popup_width       = 440
+popup_height      = 560
+expire_after_days = 0             # delete unpinned items older than N days
+tray_icon         = true
+ignore_apps       = ["keepassxc", "1password", "bitwarden"]
 ```
 
-### Nerd Font icons
-
-When `nerd_font = true` the action buttons use Nerd Font (Material Design) icons:
-
-| Button | Unicode (default) | Nerd Font |
-|---|---|---|
-| Copy | ⎘ | 󰆏 |
-| Paste to terminal | ⌨ | 󰆍 |
-| Pin (off) | ○ | 󰐃 |
-| Pin (on) | ● | 󰐄 |
-| Delete | ✕ | 󰗨 |
-
-### Custom colors
-
-Add a `[colors]` section. All fields are optional — any unset field falls back
-to the active GTK4 system theme. Setting a base color auto-derives related
-slots (e.g. `text` → `text_muted`, `row_hover`; `accent` → `selection`).
-
-```toml
-[colors]
-background        = "#1e1e2e"
-header_background = "#181825"   # default: shade(background, 0.92)
-border            = "#45475a"
-text              = "#cdd6f4"
-text_muted        = "#6c7086"   # default: alpha(text, 0.5)
-accent            = "#89b4fa"   # pin highlight + selection tint
-error             = "#f38ba8"   # delete / clear hover color
-row_hover         = "#313244"   # default: alpha(text, 0.06)
-selection         = "#45475a"   # default: alpha(accent, 0.25)
-```
-
-### Custom sizes
-
-Add a `[sizes]` section. All values are in CSS `px` units.
-
-```toml
-[sizes]
-font_preview = 13   # clipboard item text
-font_time    = 11   # timestamp label
-font_title   = 13   # popup header title
-font_buttons = 13   # action button icons
-font_undo    = 12   # undo bar text
-row_height   = 44   # minimum row height
-```
-
-### Applying config changes
-
-Config is read once at startup. To apply any changes, restart the app — no logout needed:
-
-```bash
-clipboard-manager reload
-```
-
-The `reload` command stops the running daemon and starts a fresh one in the background automatically.
+Colours and sizes can be overridden in `[colors]` and `[sizes]` sections —
+see the generated file.
 
 ## Data files
 
 | File | Purpose |
 |---|---|
-| `~/.config/clipboard-manager/config.toml` | User configuration |
-| `~/.local/share/clipboard-manager/history.bin` | Clipboard history (text, labels, colors, pins) |
-| `~/.local/share/clipboard-manager/images/` | Captured screenshots (full PNGs + 240×135 thumbnails) |
+| `~/.config/clipboard-manager/config.toml` | Configuration |
+| `~/.local/share/clipboard-manager/history.bin` | History (text, pins, labels, tags, colours) |
+| `~/.local/share/clipboard-manager/images/` | Captured images and thumbnails |
+| `~/.local/state/clipboard-manager/clipboard-manager.log` | Log of the background process |
+| `~/.local/state/clipboard-manager/portal-restore-token` | Wayland paste permission |
 
 ## Upgrade
 
-Run the same install command you used originally — it always fetches the latest release:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/sheheemmulakkal/clipboard-manager/master/install.sh | bash
-```
-
-Or download the new `.deb` from the [Releases page](../../releases/latest) and install it directly:
+Run the install command again, or install a newer `.deb`:
 
 ```bash
 sudo apt install ./clipboard-manager_*.deb
 ```
 
-Both methods:
-- Stop the running instance automatically (via the package `prerm` script)
-- Install the new binary and restart the app
-- **Preserve** your history, config, and pinned items — nothing is deleted on upgrade
-- Automatically install any new system dependencies (e.g. `libgdk-pixbuf-2.0-0` added in v1.2.0)
-
-> Clipboard history is stored in a versioned binary format. Old history files
-> are loaded transparently and re-saved in the new format on first run.
+History, config and pins are preserved. History files from older versions
+are read transparently.
 
 ## Uninstall
 ```bash
 sudo apt remove clipboard-manager
 ```
-This removes the binary, stops the running process, clears autostart entries, and deletes both `~/.config/clipboard-manager/` and `~/.local/share/clipboard-manager/`.
+This stops the app, removes autostart entries and the GNOME shortcut, and
+deletes `~/.config/clipboard-manager/`, `~/.local/share/clipboard-manager/`
+and `~/.local/state/clipboard-manager/`.
 
 ## Build from source
 ```bash
-# Install dependencies
-sudo apt install libgtk-4-dev libglib2.0-dev libx11-dev libxtst-dev libgdk-pixbuf-2.0-dev pkg-config build-essential
+sudo apt install libgtk-4-dev libglib2.0-dev libx11-dev libxtst-dev \
+  libgdk-pixbuf-2.0-dev librsvg2-common pkg-config build-essential
 
-# Build
 cargo build --release
+cargo test
 
-# Build installable .deb
+# installable .deb
 cargo install cargo-deb
 cargo deb
-sudo apt install ./target/debian/clipboard-manager_*.deb
 ```
 
-## Testing locally
+## Development
 
-Three levels depending on what you're changing:
-
-**1. App only (fastest) — no install needed:**
 ```bash
-cargo build --release && ./target/release/clipboard-manager
-```
-The app backgrounds itself automatically. To see log output instead, set `RUST_LOG`:
-```bash
-RUST_LOG=debug ./target/release/clipboard-manager
-```
-Kill it with `pkill -f clipboard-manager`.
+# Foreground with logs, as a separate instance next to an installed one
+CLIPBOARD_MANAGER_PROFILE=dev RUST_LOG=debug cargo run
 
-**2. Full .deb lifecycle — tests install/remove scripts end-to-end:**
-```bash
-cargo build --release
-cargo deb
-# Copy to /tmp so apt can access it as the _apt user (home dirs are not world-readable)
-cp target/debian/clipboard-manager_*.deb /tmp/
-sudo apt install /tmp/clipboard-manager_*.deb
-# test the app...
-sudo apt remove clipboard-manager
+# Fully isolated: nested X server, own D-Bus and data directories
+cargo build && scripts/dev-run.sh
 ```
 
-**3. Package scripts only — no rebuild needed:**
-
-When only `prerm`/`postrm` changed, swap them in-place and remove:
-```bash
-sudo cp packaging/debian/prerm  /var/lib/dpkg/info/clipboard-manager.prerm
-sudo cp packaging/debian/postrm /var/lib/dpkg/info/clipboard-manager.postrm
-sudo apt remove clipboard-manager
-```
-
-Or run scripts directly to check for errors:
-```bash
-sudo bash packaging/debian/prerm remove
-sudo bash packaging/debian/postrm remove
-```
-
-**Verify clean removal:**
-```bash
-ls ~/.config/clipboard-manager/            2>/dev/null || echo "clean"
-ls ~/.local/share/clipboard-manager/       2>/dev/null || echo "clean"
-ls ~/.config/autostart/ | grep clipboard               || echo "clean"
-pgrep -f clipboard-manager                             || echo "clean"
-```
+See [ARCHITECTURE.md](ARCHITECTURE.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 MIT

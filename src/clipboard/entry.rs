@@ -12,6 +12,16 @@ impl Default for ClipboardContent {
     }
 }
 
+/// User-editable metadata of an entry.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EntryMeta {
+    pub label: Option<String>,
+    pub color: Option<String>,
+    pub tag:   Option<String>,
+    /// Free-form text the user attached (searchable).
+    pub note:  Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ClipboardEntry {
     pub id:         u64,
@@ -20,6 +30,8 @@ pub struct ClipboardEntry {
     pub pinned:     bool,
     pub label:      Option<String>,
     pub color:      Option<String>,
+    pub tag:        Option<String>,
+    pub note:       Option<String>,
 }
 
 impl ClipboardEntry {
@@ -31,6 +43,8 @@ impl ClipboardEntry {
             pinned: false,
             label: None,
             color: None,
+            tag: None,
+            note: None,
         }
     }
 
@@ -42,24 +56,9 @@ impl ClipboardEntry {
             pinned: false,
             label: None,
             color: None,
+            tag: None,
+            note: None,
         }
-    }
-
-    pub fn preview(&self) -> String {
-        match &self.content {
-            ClipboardContent::Text(t) => {
-                let end = t.char_indices().nth(80).map(|(i, _)| i).unwrap_or(t.len());
-                t[..end].to_string()
-            }
-            ClipboardContent::Image { width, height, .. } => {
-                format!("Image {width}\u{00d7}{height}")
-            }
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn as_text(&self) -> Option<&str> {
-        if let ClipboardContent::Text(t) = &self.content { Some(t) } else { None }
     }
 
     pub fn is_image(&self) -> bool {
@@ -67,7 +66,7 @@ impl ClipboardEntry {
     }
 }
 
-fn now_secs() -> u64 {
+pub fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()

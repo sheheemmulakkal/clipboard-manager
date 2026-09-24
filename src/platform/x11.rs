@@ -29,13 +29,40 @@ impl Platform for X11Platform {
             .atom;
 
         let reply = conn
-            .get_property(false, root, atom, AtomEnum::WINDOW, 0, 1)
+            // ANY: WMs use type WINDOW, but tolerate CARDINAL.
+            .get_property(false, root, atom, AtomEnum::ANY, 0, 1)
             .ok()?
             .reply()
             .ok()?;
 
         let win = reply.value32()?.next()? as u64;
         if win == 0 { None } else { Some(win) }
+    }
+
+    // ── active_window_class ───────────────────────────────────────────────
+
+    fn active_window_class(&self) -> Option<Vec<String>> {
+        let win = self.capture_active_window()? as u32;
+        let (conn, _) = RustConnection::connect(None).ok()?;
+        let reply = conn
+            .get_property(false, win, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 256)
+            .ok()?
+            .reply()
+            .ok()?;
+        // WM_CLASS = "instance\0class\0"
+        let classes: Vec<String> = reply
+            .value
+            .split(|b| *b == 0)
+            .filter(|s| !s.is_empty())
+            .map(|s| String::from_utf8_lossy(s).into_owned())
+            .collect();
+        (!classes.is_empty()).then_some(classes)
+    }
+
+    // ── clipboard_targets ─────────────────────────────────────────────────
+
+    fn clipboard_targets(&self) -> Option<Vec<String>> {
+        clipboard_targets_x11().ok()
     }
 
     // ── paste ─────────────────────────────────────────────────────────────
@@ -98,13 +125,54 @@ impl Platform for X11Platform {
     }
 }
 
-// ── screen_dimensions (used by popup.rs for coordinate clamping) ──────────────
+// ── clipboard TARGETS query ───────────────────────────────────────────────────
 
-/// Return the primary screen dimensions in pixels.
-pub fn screen_dimensions() -> Option<(i32, i32)> {
-    let (conn, sn) = RustConnection::connect(None).ok()?;
-    let screen = &conn.setup().roots[sn];
-    Some((screen.width_in_pixels as i32, screen.height_in_pixels as i32))
+/// Ask the CLIPBOARD owner for its TARGETS list. Waits at most 200 ms for an
+/// answer so a hung owner can't stall the caller.
+pub(crate) fn clipboard_targets_x11() -> Result<Vec<String>> {
+    use x11rb::protocol::xproto::{CreateWindowAux, WindowClass};
+    use x11rb::protocol::Event;
+    use x11rb::CURRENT_TIME;
+
+    let (conn, sn) = RustConnection::connect(None).map_err(|e| anyhow!("X11 connect: {e}"))?;
+    let root = conn.setup().roots[sn].root;
+    let win  = conn.generate_id()?;
+    conn.create_window(
+        x11rb::COPY_DEPTH_FROM_PARENT, win, root, 0, 0, 1, 1, 0,
+        WindowClass::INPUT_ONLY, x11rb::COPY_FROM_PARENT, &CreateWindowAux::new(),
+    )?;
+    let atom = |name: &[u8]| -> Result<u32> { Ok(conn.intern_atom(false, name)?.reply()?.atom) };
+    let clipboard = atom(b"CLIPBOARD")?;
+    let targets   = atom(b"TARGETS")?;
+    let property  = atom(b"CLIPBOARD_MANAGER_TARGETS")?;
+
+    conn.convert_selection(win, clipboard, targets, property, CURRENT_TIME)?;
+    conn.flush()?;
+
+    let deadline = std::time::Instant::now() + Duration::from_millis(200);
+    let answered = loop {
+        match conn.poll_for_event()? {
+            Some(Event::SelectionNotify(e)) if e.requestor == win => break e.property != 0,
+            Some(_) => {}
+            None if std::time::Instant::now() > deadline => break false,
+            None => std::thread::sleep(Duration::from_millis(2)),
+        }
+    };
+    if !answered {
+        let _ = conn.destroy_window(win);
+        return Err(anyhow!("no TARGETS reply"));
+    }
+
+    let reply = conn.get_property(true, win, property, AtomEnum::ANY, 0, 1024)?.reply()?;
+    let atoms: Vec<u32> = reply.value32().map(|v| v.collect()).unwrap_or_default();
+    let cookies: Vec<_> = atoms.iter().filter_map(|a| conn.get_atom_name(*a).ok()).collect();
+    let names = cookies
+        .into_iter()
+        .filter_map(|c| c.reply().ok())
+        .map(|r| String::from_utf8_lossy(&r.name).into_owned())
+        .collect();
+    let _ = conn.destroy_window(win);
+    Ok(names)
 }
 
 // ── paste implementation ──────────────────────────────────────────────────────

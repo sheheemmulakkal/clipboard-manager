@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::clipboard::entry::ClipboardEntry;
+use crate::clipboard::entry::{ClipboardEntry, EntryMeta};
 use crate::store::engine::PersistenceEngine;
 use crate::store::memory::MemoryStore;
 use crate::store::Store;
@@ -40,6 +40,10 @@ impl Store for PersistentStore {
         self.flush();
     }
 
+    fn next_id(&mut self) -> u64 {
+        self.inner.next_id()
+    }
+
     fn remove(&mut self, id: u64) {
         self.inner.remove(id);
         self.flush();
@@ -50,8 +54,22 @@ impl Store for PersistentStore {
         self.flush();
     }
 
-    fn set_label(&mut self, id: u64, label: Option<String>, color: Option<String>) {
-        self.inner.set_label(id, label, color);
+    fn get(&self, id: u64) -> Option<&ClipboardEntry> {
+        self.inner.get(id)
+    }
+
+    fn touch(&mut self, id: u64) {
+        self.inner.touch(id);
+        self.flush();
+    }
+
+    fn set_text(&mut self, id: u64, text: String) {
+        self.inner.set_text(id, text);
+        self.flush();
+    }
+
+    fn set_meta(&mut self, id: u64, meta: EntryMeta) {
+        self.inner.set_meta(id, meta);
         self.flush();
     }
 
@@ -60,8 +78,16 @@ impl Store for PersistentStore {
         self.flush();
     }
 
-    fn clear(&mut self) {
-        self.inner.clear();
+    fn expire_older_than(&mut self, cutoff: u64) -> usize {
+        let n = self.inner.expire_older_than(cutoff);
+        if n > 0 {
+            self.flush();
+        }
+        n
+    }
+
+    fn restore(&mut self, entries: Vec<ClipboardEntry>) {
+        self.inner.restore(entries);
         self.flush();
     }
 
@@ -71,10 +97,6 @@ impl Store for PersistentStore {
 
     fn len(&self) -> usize {
         self.inner.len()
-    }
-
-    fn contains_text(&self, text: &str) -> bool {
-        self.inner.contains_text(text)
     }
 
     fn contains_image_hash(&self, hash: &[u8; 32]) -> bool {

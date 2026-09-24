@@ -1,294 +1,160 @@
 # Architecture
 
-A deep-dive into how Clipboard Manager is structured. Read this before
-making a non-trivial contribution.
-
----
+Clipboard Manager is a single-process GTK4 daemon. Everything that touches
+GTK or the history store runs on the glib main thread; background threads
+only listen for hotkeys, serve the tray icon and send paste keystrokes.
 
 ## Overview
 
-Clipboard Manager is a single-binary GTK4 desktop app for Ubuntu. It runs as
-a background daemon and surfaces a popup window on a global hotkey. All UI
-work runs on the GTK/glib main thread; background threads are used only for
-hotkey listening and paste dispatch.
-
 ```
-┌─────────────────────────────────────────────────────┐
-│                   GTK main thread                   │
-│                                                     │
-│  ClipboardMonitor ──► Store ──► popup.populate()   │
-│  (500ms poll)         │                             │
-│                       │        ClipboardPopup       │
-│  glib poll loop ◄─────┘        (GTK Window)        │
-│  (50ms)                                             │
-└──────────┬──────────────────────────┬───────────────┘
-           │ mpsc channel             │ mpsc channel
-    ┌──────▼──────┐            ┌──────▼──────┐
-    │   Hotkey    │            │  ksni tray  │
-    │   thread    │            │   thread    │
-    └─────────────┘            └─────────────┘
+ hotkey thread ─┐                           ┌─ ClipboardMonitor (GDK clipboard `changed`)
+ tray thread ───┼─ AppEvent ─▶ async_channel│            │ add / bump
+ CLI (D-Bus) ───┘   (Show, Toggle, …)       │            ▼
+                         │                  │      Store (MemoryStore + PersistentStore)
+                         ▼                  │            ▲
+                    Controller ◀────────────┘            │ touch / meta / remove …
+                     │      ▲                            │
+            populate │      │ PopupEvent (Row, Search, Chip, Menu, ClearAll)
+                     ▼      │
+                 ClipboardPopup (window, header, search, chips, rows, popovers)
+                     │
+                 Platform (X11Platform | WaylandPlatform): paste, window focus, placement
 ```
-
----
 
 ## Directory layout
 
 ```
 src/
-├── main.rs                 Entry point — daemon / CLI dispatch
-├── app.rs                  App struct, GTK activation, all closure wiring
-├── config.rs               AppConfig — loaded from config.toml via serde
-│
-├── clipboard/
-│   ├── entry.rs            ClipboardContent enum + ClipboardEntry struct
-│   └── monitor.rs          ClipboardMonitor — 500ms GDK clipboard poll
-│
-├── store/
-│   ├── mod.rs              Store trait
-│   ├── memory.rs           MemoryStore — in-memory VecDeque implementation
-│   ├── engine.rs           PersistenceEngine — V3 binary format read/write
-│   └── persistent.rs       PersistentStore — decorator that flushes on every write
-│
-├── platform/
-│   ├── mod.rs              Platform trait + detect() factory
-│   ├── x11.rs              X11Platform — x11rb: paste, cursor, window move
-│   └── wayland.rs          WaylandPlatform — ashpd portals: paste
-│
-├── hotkey/
-│   ├── mod.rs              HotkeyManager trait + detect() factory
-│   ├── x11.rs              X11HotkeyManager — XGrabKey via x11rb
-│   ├── wayland.rs          WaylandHotkeyManager — GlobalShortcuts portal
-│   └── evdev.rs            evdev fallback — reads /dev/input/event* directly
-│
-└── ui/
-    ├── mod.rs
-    ├── popup.rs            ClipboardPopup — the GTK Window + all callbacks
-    ├── item_row.rs         build_item_row() — one list row per entry
-    └── style.rs            generate_css() — runtime CSS generation
+  main.rs            CLI dispatch, daemonize, Wayland → XWayland backend choice
+  app.rs             GTK application: command-line handling, wiring, startup GC
+  controller.rs      Controller: store + popup + platform; handles all events
+  events.rs          AppEvent (threads → main), PopupEvent / RowAction / MenuAction
+  cli.rs             Command parsing and `list` output (pure)
+  config.rs          AppConfig (TOML), theme name, colour/size overrides
+  paths.rs           Data/config/state dirs (0700), image paths, dev profile ids
+  notify.rs          Desktop notifications for errors the user must act on
+  tray.rs            StatusNotifierItem tray icon (ksni)
+  clipboard/
+    entry.rs         ClipboardEntry, ClipboardContent, EntryMeta
+    kind.rs          ContentKind detection: URL, email, path, shell, code, colour, secret
+    monitor.rs       Capture: size caps, password hint, ignored apps, pause, images
+  store/
+    mod.rs           Store trait
+    memory.rs        MemoryStore: ordering, dedup-as-bump, eviction, restore, expiry
+    persistent.rs    PersistentStore: MemoryStore + flush on every mutation
+    engine.rs        history.bin reader/writer (V1–V5)
+  hotkey/            X11 XGrabKey · Wayland portal → GNOME shortcut → evdev
+  platform/          X11Platform (x11rb, XTest) · WaylandPlatform (RemoteDesktop portal)
+  ui/
+    popup.rs         Window, header, search, chips, list, undo bar, keyboard, focus
+    item_row.rs      One row: dot/keycap, kind tile/thumbnail, label-or-content, tag pill, actions, pin
+    context_menu.rs  Right-click menu with tag and colour sub-pages
+    editor.rs        Edit popover: title, content, note
+    preview.rs       Full preview popover
+    filter.rs        Ordering, search and chip filtering (pure)
+    format.rs        Relative time, titles, subtitles, preview header (pure)
+    icons.rs         Embedded SVG icons → HiDPI textures
+    theme.rs         Theme tokens, colour palette, default tags
+    style.rs         CSS generated from the theme
+assets/icons/        24×24 stroke SVGs (currentColor)
 ```
 
----
+## Key design points
 
-## Key design patterns
+### Controller + events
+The popup never touches the store. Every user action becomes a
+`PopupEvent` handed to the `Controller`, which mutates the store and calls
+`refresh()`: filter → sort → `popup.populate()`. Background threads send
+`AppEvent`s through an `async_channel` that a `glib::spawn_future_local`
+loop feeds to the controller.
 
-### 1. Strategy pattern — Platform and Hotkey
+Popovers (menu, editor, preview) emit their action **after** they have
+closed and been unparented: the action usually rebuilds the list, and
+the row that owned the popover would otherwise be destroyed while it still
+had a child popover.
 
-Both `Platform` and `HotkeyManager` use the Strategy pattern. The concrete
-implementation is chosen once at startup by inspecting `$WAYLAND_DISPLAY`:
+### Focus loss closes the popup
+The popup hides when it loses focus, except while a popover is open (a
+counter `suppress_close` maintained by `track_popover`), while "keep open"
+is on, or during a header drag (see the drag-tracking comment in popup.rs).
 
-```rust
-// platform::detect() returns Arc<dyn Platform>
-// hotkey::detect()   returns Box<dyn HotkeyManager>
-```
+### Placement
+On X11 the popup opens next to the cursor, clamped to the work area of
+the monitor under the cursor. Mutter places a newly mapped window itself,
+so the move is (re)applied after the first paint and on activation.
 
-`Arc<dyn Platform>` is used (not `Box`) because the platform is shared between
-the GTK main thread and background `std::thread::spawn` threads.
+### Clipboard capture
+`ClipboardMonitor` reacts to GDK's clipboard `changed` signal (XFixes on
+X11). It ignores our own clipboard changes (the controller records those
+as "touch"), paused capture, content carrying the
+`x-kde-passwordManagerHint` target (queried from X11 directly, because GDK
+hides non-MIME targets), and copies made while an ignored app is focused.
 
-### 2. Repopulate pattern
+### Re-copy = move to top
+With `deduplicate = true`, adding content that is already stored moves the
+existing entry to the newest position with a fresh timestamp and keeps its
+id, pin, label, colour and tag.
 
-The popup list is rebuilt from scratch on every change (pin, remove, search).
-A repopulate closure is stored in `Rc<RefCell<Option<Box<dyn Fn()>>>>` and
-called by every mutating callback:
+### Wayland
+On a Wayland session with XWayland available, `main` sets
+`GDK_BACKEND=x11`: an XWayland client can read the clipboard in the
+background (native Wayland clients only while focused). The platform and
+hotkey backends still key on the *session*: paste goes through the
+RemoteDesktop portal (restore token saved, session closed after 10 s idle so
+GNOME's remote-control indicator doesn't stay on), and the hotkey falls back
+from the GlobalShortcuts portal to a GNOME custom shortcut running
+`clipboard-manager toggle`, then to evdev.
 
-```
-on_remove/on_pin/on_label
-  └── store.borrow_mut().mutate(...)
-  └── repop.borrow().as_ref().unwrap()()   ← rebuilds the list
-```
-
-This avoids circular closure references: no callback holds a direct reference
-to another callback.
-
-### 3. Callback storage in ClipboardPopup
-
-`populate()` is called on every repopulate. To avoid rebuilding the GTK
-Window, callbacks are stored as `Rc<RefCell<Option<Rc<dyn Fn(...)>>>>` and
-replaced in-place:
-
-```rust
-*self.on_select.borrow_mut() = Some(Rc::new(new_closure));
-```
-
-### 4. Cross-thread communication
-
-Only `std::sync::mpsc::sync_channel` (capacity 1) is used to cross thread
-boundaries. The glib 50ms poll loop drains these channels on the main thread:
-
-```
-hotkey thread  ──► hotkey_tx  ──► [poll loop] ──► show popup
-tray thread    ──► tray_tx    ──► [poll loop] ──► show popup / quit
-```
-
-`Rc<RefCell<...>>` is used everywhere on the GTK side (single-threaded).
-`Arc<Mutex<...>>` is only used for the `show_tx` sender shared with the
-GTK re-activation handler.
-
----
+### Single instance and CLI
+GApplication with `HANDLES_COMMAND_LINE`. A second `clipboard-manager
+<command>` forwards its command line over D-Bus to the running instance;
+results come back as the exit status (printing into the caller's terminal
+needs glib 2.80). `list` reads history.bin in the client process.
 
 ## Data model
 
-### ClipboardContent
-
 ```rust
-pub enum ClipboardContent {
-    Text(String),
-    Image { hash: [u8; 32], width: u32, height: u32 },
-}
+enum ClipboardContent { Text(String), Image { hash: [u8; 32], width: u32, height: u32 } }
+struct ClipboardEntry { id, content, copied_at, pinned, label, color, tag, note }
 ```
 
-`ClipboardEntry.content` is this enum. Image files live on disk — only the
-metadata is in RAM.
+Images are stored as `images/<sha256>.png` plus `<sha256>_thumb.png`;
+orphans are deleted at startup.
 
-### Image file layout
-
-```
-~/.local/share/clipboard-manager/images/
-  {sha256_hex}.png           ← full resolution PNG
-  {sha256_hex}_thumb.png     ← 240×135 thumbnail (pre-generated at capture)
-```
-
-Images are deduplicated by SHA-256. A startup GC (`gc_image_files` in
-`app.rs`) deletes files whose store entry has been evicted.
-
-### Store trait
-
-```rust
-pub trait Store: Send + Sync {
-    fn add(&mut self, entry: ClipboardEntry);
-    fn remove(&mut self, id: u64);
-    fn get_all(&self) -> Vec<&ClipboardEntry>;
-    fn contains_text(&self, text: &str) -> bool;
-    fn contains_image_hash(&self, hash: &[u8; 32]) -> bool;
-    fn set_pinned(&mut self, id: u64, pinned: bool);
-    fn set_label(&mut self, id: u64, label: Option<String>, color: Option<String>);
-    fn clear_unpinned(&mut self);
-    fn clear(&mut self);
-    fn len(&self) -> usize;
-}
-```
-
-`PersistentStore` wraps `MemoryStore` as a decorator: every mutating method
-delegates to the inner store, then calls `flush()`. All eviction and dedup
-logic lives in `MemoryStore`.
-
----
-
-## Persistence — binary format (V3)
-
-File: `~/.local/share/clipboard-manager/history.bin`
-
-**Header** (22 bytes):
-```
-CLIPMGR1 (8)  |  version u16 LE (2)  |  flags u16 (2)  |  count u32 (4)  |  reserved (6)
-```
-
-**Text entry** (type byte = 0):
-```
-type(1)=0 | id(8) | copied_at(8) | pinned(1) | pad(3) | content_len(4) | content(n)
-| has_label(1) | [label_len(4) | label(n)]
-| has_color(1) | [color_len(4) | color(n)]
-| crc32(4)    ← CRC covers from id(8) onward
-```
-
-**Image entry** (type byte = 1):
-```
-type(1)=1 | id(8) | copied_at(8) | pinned(1) | pad(3) | hash(32) | width(4) | height(4)
-| has_label(1) | [label_len(4) | label(n)]
-| has_color(1) | [color_len(4) | color(n)]
-| crc32(4)
-```
-
-V1 and V2 files are read transparently (as all-text) and re-saved as V3 on
-the next flush. CRC32 mismatches are skipped with a warning; partial files
-are recovered up to the corrupt entry.
-
----
-
-## Clipboard capture flow
+## Persistence — history.bin (V5)
 
 ```
-glib 500ms timer
-  └── clipboard.formats()           check MIME types (cheap, no data transfer)
-        ├── image/* only  ──► read_texture_async()
-        │                         save PNG → hash → dedup → thumbnail → store.add()
-        └── text present  ──► read_text_async()
-                                  dedup → store.add()
+header: magic "CLIPMGR1" | version u16 | flags u16 | count u32 | reserved[6]
+entry:  type u8 (0 text, 1 image)
+        id u64 | copied_at u64 | pinned u8 | pad[3]
+        text:  len u32 | utf8   —or—   image: hash[32] | width u32 | height u32
+        label: has u8 [len u32 | utf8]
+        color: has u8 [len u32 | utf8]
+        tag:   has u8 [len u32 | utf8]            (V4)
+        note:  has u8 [len u32 | utf8]            (V5)
+        crc32 u32 over everything after the type byte
 ```
 
-**Note:** image capture runs synchronously on the GTK main thread inside the
-async callback. For a 1080p screenshot this is ~200–500ms of blocking work
-(PNG encode + hash + thumbnail). This is a known limitation — see
-[#TODO: issue link] for the tracked improvement.
+The file is written to `history.bin.tmp` (mode 0600, fsync) and renamed.
+The reader accepts V1–V5; an oversize or invalid-UTF-8 entry is skipped
+(its length is known), and a CRC mismatch or truncation stops reading and
+keeps what was read so far.
 
----
+## Testing
 
-## Paste flow
-
-```
-1. Hotkey fires (background thread)
-     └── platform.capture_active_window()   ← X11: _NET_ACTIVE_WINDOW
-     └── hotkey_tx.send(prev_window_id)
-
-2. Poll loop (main thread, 50ms)
-     └── popup.populate(...) + show
-
-3. User clicks row
-     └── set_clipboard_content(content, image_dir)
-           Text  → clipboard.set_text()
-           Image → Texture::from_file() → clipboard.set_texture()
-     └── popup.hide()
-     └── glib::timeout (200ms)
-           └── std::thread::spawn
-                 └── platform.paste(prev_window_id)
-                       X11      → XActivateWindow + XTest Ctrl+V
-                       Wayland  → RemoteDesktop portal Ctrl+V
-```
-
----
-
-## CSS generation
-
-CSS is generated at runtime by `src/ui/style.rs` — not loaded from a static
-file. This lets user color/size config flow directly into the CSS without
-string interpolation hacks. The `generate_css(colors, sizes)` function takes
-resolved color values and emits a single CSS string loaded via `CssProvider`.
-
----
-
-## Feature flags
-
-| Flag | Default | What it enables |
-|---|---|---|
-| `ui` | ✅ | GTK4, gdk4, gdk4-x11, sha2, gdk-pixbuf |
-| `persist` | ✅ | Binary history persistence (pure std, no external deps) |
-
-Build without UI (for testing store/config logic):
-```bash
-cargo build --no-default-features --features persist
-```
-
----
-
-## Adding a new feature — checklist
-
-- **New clipboard content type**: add a variant to `ClipboardContent`, handle
-  it in `engine.rs` (new type byte), `monitor.rs` (capture), `item_row.rs`
-  (display), and `app.rs` (`set_clipboard_content` + `filter_entries`).
-
-- **New store operation**: add to the `Store` trait in `mod.rs`, implement in
-  `MemoryStore`, delegate in `PersistentStore`.
-
-- **New UI callback**: add the `Rc<RefCell<Option<...>>>` field to
-  `ClipboardPopup`, wire it in `populate()`, and add the matching argument.
-
-- **New platform operation**: add to the `Platform` trait, implement in both
-  `X11Platform` and `WaylandPlatform` (even if the Wayland version is a no-op).
-
----
+- `cargo test` covers the pure logic: store, persistence (all versions,
+  corruption, permissions), kind detection, filtering, formatting, CLI
+  parsing, theme, placement maths.
+- `scripts/dev-run.sh` runs a build in a nested X server with its own
+  D-Bus session and data directories, for manual testing without touching
+  your real clipboard or installed instance.
+- `CLIPBOARD_MANAGER_PROFILE=dev` runs a development instance next to an
+  installed one.
 
 ## Known limitations
 
-- Image capture blocks the GTK main thread (~200–500ms per screenshot).
-- Wayland hotkey requires a compositor that supports `GlobalShortcuts` portal
-  (GNOME 43+, KDE Plasma 6). Falls back to evdev on failure.
-- No automated test suite — logic is tested manually.
+- Native Wayland without XWayland: history only records while the popup is
+  focused (no data-control protocol support yet).
+- On Wayland the popup opens centred (no global cursor position).
+- The ignored-apps check needs X11 window information (not available for
+  native Wayland apps); the password-manager hint works everywhere.

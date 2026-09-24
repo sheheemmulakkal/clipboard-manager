@@ -2,7 +2,7 @@
 Version=1.0
 Type=Application
 Name=Clipboard Manager
-Comment=Clipboard history at your fingertips — press Super+V
+Comment=Clipboard history at your fingertips — press Ctrl+Alt+C
 Exec=clipboard-manager
 Icon=edit-paste
 Terminal=false

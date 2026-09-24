@@ -5,14 +5,12 @@ use super::Platform;
 
 /// Wayland backend.
 ///
-/// * Paste     – `org.freedesktop.portal.RemoteDesktop` (ashpd).
-///               A single portal session is created on the first paste and
-///               reused for every subsequent paste, so the permission dialog
-///               appears at most once per application run.
-/// * Cursor    – not exposed by Wayland; returns `None`.
-/// * move_popup – no-op; the compositor positions windows.
-/// * button1_held / can_query_button1 – always false; Wayland does not expose
-///               pointer button state to other clients.
+/// * Paste: `org.freedesktop.portal.RemoteDesktop` (ashpd). A saved restore
+///   token means the permission dialog appears once, not on every login.
+/// * Cursor: not exposed by Wayland; returns `None` (the popup is centred).
+/// * `move_popup`: no-op; the compositor positions windows.
+/// * `button1_held` / `can_query_button1`: always false; Wayland does not
+///   expose pointer button state to other clients.
 pub struct WaylandPlatform {
     #[allow(dead_code)] // keeps the runtime alive for the paste daemon task
     rt:       Runtime,
@@ -27,10 +25,6 @@ impl WaylandPlatform {
         Self { rt, paste_tx }
     }
 }
-
-// SAFETY: tokio Runtime and mpsc::Sender are Send+Sync.
-unsafe impl Send for WaylandPlatform {}
-unsafe impl Sync for WaylandPlatform {}
 
 impl Platform for WaylandPlatform {
     fn capture_active_window(&self) -> Option<u64> {
@@ -62,105 +56,144 @@ impl Platform for WaylandPlatform {
         let _ = done_rx.blocking_recv();
     }
 
+    /// The UI runs on XWayland (see main.rs), where the X11 TARGETS query
+    /// sees the compositor's mirrored clipboard, including the password hint.
+    fn clipboard_targets(&self) -> Option<Vec<String>> {
+        if on_xwayland() {
+            super::x11::clipboard_targets_x11().ok()
+        } else {
+            None
+        }
+    }
+
     fn cursor_position(&self) -> Option<(i32, i32)> {
         None
     }
 
     fn move_popup(&self, _window: &gtk4::Window, _x: i32, _y: i32) {}
 
-    fn button1_held(&self) -> bool { false }
+    // Under XWayland (the default, see main.rs) the X11 pointer query works
+    // for our own window, which is all the drag detection needs.
+    fn button1_held(&self) -> bool {
+        on_xwayland() && super::x11::X11Platform.button1_held()
+    }
 
-    fn can_query_button1(&self) -> bool { false }
+    fn can_query_button1(&self) -> bool {
+        on_xwayland()
+    }
 }
 
-// ── Persistent RemoteDesktop session daemon ───────────────────────────────────
+// ── RemoteDesktop paste daemon ────────────────────────────────────────────────
 //
 // Runs as a tokio task for the lifetime of the app.
 //
-// Lifecycle:
-//   1. Waits for the first paste request (so the permission dialog only
-//      appears when the user actually tries to paste — not at app startup).
-//   2. Creates a RemoteDesktop session and calls `start()`. On first run this
-//      shows the "Allow remote interaction?" GNOME dialog. The user grants
-//      permission once.
-//   3. Serves every subsequent paste request by re-using the open session.
-//      No further dialogs appear.
+// * The session is opened on the first paste request (so the permission
+//   dialog only appears when the user actually pastes), with a restore token
+//   saved from an earlier grant — then no dialog appears at all.
+// * The session is closed after `IDLE_CLOSE` without pastes: GNOME shows a
+//   "remote control" indicator in the top bar while a session is open.
+// * Each successful start returns a fresh restore token, which is saved.
 //
-// If the session fails to initialize, paste requests are silently completed
-// (the paste is a no-op but the app keeps running).
+// If the portal fails, the paste is a no-op (the item is still on the
+// clipboard) and the next paste tries again.
 
-async fn paste_session_daemon(mut rx: mpsc::Receiver<(bool, oneshot::Sender<()>)>) {
-    use ashpd::desktop::remote_desktop::{DeviceType, RemoteDesktop};
+/// Close the RemoteDesktop session after this long without pastes.
+const IDLE_CLOSE: std::time::Duration = std::time::Duration::from_secs(10);
+
+type PasteRequest = (bool, oneshot::Sender<()>);
+
+async fn paste_session_daemon(mut rx: mpsc::Receiver<PasteRequest>) {
+    use ashpd::desktop::remote_desktop::RemoteDesktop;
+
+    let proxy = match RemoteDesktop::new().await {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!("wayland paste: RemoteDesktop portal unavailable: {e}");
+            drain(rx).await;
+            return;
+        }
+    };
+
+    while let Some((shift, done)) = rx.recv().await {
+        let Some(session) = open_session(&proxy).await else {
+            let _ = done.send(());
+            continue;
+        };
+        send_paste(&proxy, &session, shift).await;
+        let _ = done.send(());
+
+        // Serve further pastes until the session has been idle for a while.
+        loop {
+            match tokio::time::timeout(IDLE_CLOSE, rx.recv()).await {
+                Ok(Some((shift, done))) => {
+                    send_paste(&proxy, &session, shift).await;
+                    let _ = done.send(());
+                }
+                Ok(None) => {
+                    let _ = session.close().await;
+                    return;
+                }
+                Err(_idle) => {
+                    let _ = session.close().await;
+                    tracing::debug!("wayland paste: session closed (idle)");
+                    break;
+                }
+            }
+        }
+    }
+}
+
+/// Create and start a keyboard RemoteDesktop session.
+async fn open_session<'a>(
+    proxy: &'a ashpd::desktop::remote_desktop::RemoteDesktop<'a>,
+) -> Option<ashpd::desktop::Session<'a, ashpd::desktop::remote_desktop::RemoteDesktop<'a>>> {
+    use ashpd::desktop::remote_desktop::DeviceType;
     use ashpd::desktop::PersistMode;
     use ashpd::WindowIdentifier;
 
-    // ── Wait for the first paste request ────────────────────────────────────
-    let (first_shift, first_done) = match rx.recv().await {
-        Some((shift, tx)) => (shift, tx),
-        None              => return,
-    };
+    let session = proxy
+        .create_session()
+        .await
+        .map_err(|e| tracing::warn!("wayland paste: create_session failed: {e}"))
+        .ok()?;
 
-    // ── Create the session (shows dialog on first run) ───────────────────────
-    let proxy = match RemoteDesktop::new().await {
-        Ok(p)  => p,
-        Err(e) => {
-            tracing::warn!("wayland paste: failed to connect to RemoteDesktop portal: {e}");
-            let _ = first_done.send(());
-            drain(rx).await;
-            return;
-        }
-    };
-
-    let session = match proxy.create_session().await {
-        Ok(s)  => s,
-        Err(e) => {
-            tracing::warn!("wayland paste: create_session failed: {e}");
-            let _ = first_done.send(());
-            drain(rx).await;
-            return;
-        }
-    };
-
-    if let Err(e) = proxy
+    // A token from an earlier grant skips the permission dialog.
+    let token_path = crate::paths::state_dir().join("portal-restore-token");
+    let saved_token = load_token(&token_path);
+    proxy
         .select_devices(
             &session,
             DeviceType::Keyboard.into(),
-            None,
+            saved_token.as_deref(),
             PersistMode::ExplicitlyRevoked, // remember grant across re-launches
         )
         .await
-    {
-        tracing::warn!("wayland paste: select_devices failed: {e}");
-        let _ = first_done.send(());
-        drain(rx).await;
-        return;
+        .map_err(|e| tracing::warn!("wayland paste: select_devices failed: {e}"))
+        .ok()?;
+
+    // Without a valid token this shows GNOME's "Allow remote interaction?" dialog.
+    let selected = proxy
+        .start(&session, &WindowIdentifier::default())
+        .await
+        .and_then(|r| r.response())
+        .map_err(|e| tracing::warn!("wayland paste: start failed: {e}"))
+        .ok()?;
+    if let Some(token) = selected.restore_token() {
+        save_token(&token_path, token);
     }
+    tracing::debug!("wayland paste: RemoteDesktop session ready");
+    Some(session)
+}
 
-    // `start()` triggers the one-time GNOME permission dialog.
-    if let Err(e) = proxy.start(&session, &WindowIdentifier::default()).await {
-        tracing::warn!("wayland paste: start failed: {e}");
-        let _ = first_done.send(());
-        drain(rx).await;
-        return;
-    }
-
-    tracing::info!("wayland paste: RemoteDesktop session ready");
-
-    // ── Serve the first paste, then all subsequent ones ──────────────────────
-    if first_shift {
-        send_ctrl_shift_v(&proxy, &session).await;
+async fn send_paste<'a>(
+    proxy:   &ashpd::desktop::remote_desktop::RemoteDesktop<'a>,
+    session: &ashpd::desktop::Session<'a, ashpd::desktop::remote_desktop::RemoteDesktop<'a>>,
+    terminal: bool,
+) {
+    if terminal {
+        send_ctrl_shift_v(proxy, session).await;
     } else {
-        send_ctrl_v(&proxy, &session).await;
-    }
-    let _ = first_done.send(());
-
-    while let Some((use_shift, done_tx)) = rx.recv().await {
-        if use_shift {
-            send_ctrl_shift_v(&proxy, &session).await;
-        } else {
-            send_ctrl_v(&proxy, &session).await;
-        }
-        let _ = done_tx.send(());
+        send_ctrl_v(proxy, session).await;
     }
 }
 
@@ -192,9 +225,53 @@ async fn send_ctrl_shift_v<'a>(
     let _ = proxy.notify_keyboard_keysym(session, 0xffe3, KeyState::Released).await;
 }
 
+/// Whether the UI runs on XWayland (GDK's X11 backend on a Wayland session).
+fn on_xwayland() -> bool {
+    std::env::var("GDK_BACKEND").as_deref() == Ok("x11")
+}
+
+/// Read a saved RemoteDesktop restore token.
+fn load_token(path: &std::path::Path) -> Option<String> {
+    std::fs::read_to_string(path).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+/// Save a RemoteDesktop restore token (0600: it grants input injection).
+fn save_token(path: &std::path::Path, token: &str) {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let result = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+        .and_then(|mut f| f.write_all(token.as_bytes()));
+    if let Err(e) = result {
+        tracing::warn!("wayland paste: cannot save restore token: {e}");
+    }
+}
+
 /// Drain remaining paste requests after a fatal error (so callers unblock).
-async fn drain(mut rx: mpsc::Receiver<(bool, oneshot::Sender<()>)>) {
+async fn drain(mut rx: mpsc::Receiver<PasteRequest>) {
     while let Some((_, tx)) = rx.recv().await {
         let _ = tx.send(());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restore_token_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("cm-test-{}-token", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("portal-restore-token");
+        assert_eq!(load_token(&path), None);
+        save_token(&path, "abc-123");
+        assert_eq!(load_token(&path).as_deref(), Some("abc-123"));
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
     }
 }

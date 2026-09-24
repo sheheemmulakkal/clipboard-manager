@@ -20,9 +20,8 @@ pub trait HotkeyManager: 'static {
 
 /// Return the best `HotkeyManager` for the current display server.
 ///
-/// * Wayland (`WAYLAND_DISPLAY` set) → `WaylandHotkeyManager`
-///   (uses `org.freedesktop.portal.GlobalShortcuts`; falls back gracefully
-///    if the compositor does not support the portal)
+/// * Wayland (`WAYLAND_DISPLAY` set) → `WaylandHotkeyManager`: the
+///   GlobalShortcuts portal, else a GNOME custom shortcut, else evdev
 /// * X11 → `X11HotkeyManager` (XGrabKey via x11rb)
 pub fn detect(hotkey: &str) -> Box<dyn HotkeyManager> {
     if std::env::var("WAYLAND_DISPLAY").is_ok() {

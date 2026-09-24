@@ -48,11 +48,17 @@ impl HotkeyManager for WaylandHotkeyManager {
                         Ok(()) => {}
                         Err(e) => {
                             tracing::warn!("hotkey/wayland: GlobalShortcuts portal unavailable: {e}");
+                            // GNOME: a custom keyboard shortcut running
+                            // `clipboard-manager toggle` needs no permissions.
+                            if is_gnome() && setup_gnome_shortcut(&hotkey) {
+                                return;
+                            }
                             tracing::info!("hotkey/wayland: trying evdev keyboard listener...");
                             if !crate::hotkey::evdev::start(&hotkey, cb) {
-                                // evdev failed too (no `input` group) — auto-configure a
-                                // GNOME custom keyboard shortcut that sends SIGUSR1.
-                                setup_gnome_shortcut(&hotkey);
+                                crate::notify::error(
+                                    "Clipboard Manager: no global hotkey",
+                                    "Add a keyboard shortcut in your desktop settings that runs:\n  clipboard-manager toggle",
+                                );
                             }
                         }
                     }
@@ -111,7 +117,7 @@ fn to_portal_trigger(hotkey: &str) -> Option<String> {
         match part.trim().to_lowercase().as_str() {
             "ctrl" | "control" => mods.push_str("<Ctrl>"),
             "alt"              => mods.push_str("<Alt>"),
-            "super" | "win"    => mods.push_str("<Super>"),
+            "super" | "win" | "meta" => mods.push_str("<Super>"),
             "shift"            => mods.push_str("<Shift>"),
             k                  => key = k.to_string(),
         }
@@ -132,10 +138,11 @@ fn to_portal_trigger(hotkey: &str) -> Option<String> {
 /// The shortcut command is the current executable path. GTK's single-instance
 /// mechanism (via D-Bus) routes the second launch back to the running daemon,
 /// which shows the popup — no signals or special permissions required.
-fn setup_gnome_shortcut(hotkey: &str) {
+fn setup_gnome_shortcut(hotkey: &str) -> bool {
     let exe = std::env::current_exe()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| "clipboard-manager".to_string());
+    let command = format!("{exe} toggle");
 
     let path = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/clipboard-manager/";
     let schema = format!(
@@ -145,19 +152,38 @@ fn setup_gnome_shortcut(hotkey: &str) {
     let binding = to_portal_trigger(hotkey).unwrap_or_else(|| "<Ctrl><Alt>c".to_string());
 
     let ok = gsettings(&["set", &schema, "name",    "Clipboard Manager"])
-          && gsettings(&["set", &schema, "command", &exe])
+          && gsettings(&["set", &schema, "command", &command])
           && gsettings(&["set", &schema, "binding", &binding]);
 
     if !ok {
-        eprintln!("clipboard-manager: hotkey could not be configured (gsettings unavailable).");
-        eprintln!("  On other DEs, add a custom shortcut that runs:");
-        eprintln!("    pkill -USR1 clipboard-manager");
-        return;
+        tracing::warn!("hotkey/wayland: gsettings unavailable — cannot add a GNOME shortcut");
+        return false;
     }
 
     add_to_keybindings_list(path);
 
-    tracing::info!("hotkey/wayland: GNOME keyboard shortcut registered: {binding} → {exe}");
+    tracing::info!("hotkey/wayland: GNOME keyboard shortcut registered: {binding} → {command}");
+    true
+}
+
+fn is_gnome() -> bool {
+    std::env::var("XDG_CURRENT_DESKTOP")
+        .map(|d| d.split(':').any(|p| p.eq_ignore_ascii_case("gnome")))
+        .unwrap_or(false)
+}
+
+/// The gsettings `custom-keybindings` list with `path` appended, or `None`
+/// if it is already there.
+fn add_path_to_list(current: &str, path: &str) -> Option<String> {
+    let current = current.trim();
+    if current.contains(path) {
+        return None;
+    }
+    Some(if current == "@as []" || current.is_empty() || current == "[]" {
+        format!("['{path}']")
+    } else {
+        format!("{}, '{path}']", current.trim_end_matches(']'))
+    })
 }
 
 /// Run `gsettings <args>` and return true on success.
@@ -178,17 +204,8 @@ fn add_to_keybindings_list(path: &str) {
         .ok()
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .unwrap_or_default();
-    let current = current.trim();
-
-    if current.contains(path) {
+    let Some(new_val) = add_path_to_list(&current, path) else {
         return; // already registered — idempotent
-    }
-
-    let new_val = if current == "@as []" || current.is_empty() {
-        format!("['{}']", path)
-    } else {
-        // current looks like ['/path/1/', '/path/2/'] — insert before closing bracket
-        format!("{}, '{}']", current.trim_end_matches(']'), path)
     };
 
     gsettings(&[
@@ -197,4 +214,28 @@ fn add_to_keybindings_list(path: &str) {
         "custom-keybindings",
         &new_val,
     ]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn portal_trigger_format() {
+        assert_eq!(to_portal_trigger("ctrl+alt+c").as_deref(), Some("<Ctrl><Alt>c"));
+        assert_eq!(to_portal_trigger("super+shift+v").as_deref(), Some("<Super><Shift>v"));
+        assert_eq!(to_portal_trigger("ctrl+alt").as_deref(), None);
+    }
+
+    #[test]
+    fn keybinding_list_update() {
+        let p = "/x/clipboard-manager/";
+        assert_eq!(add_path_to_list("@as []", p), Some(format!("['{p}']")));
+        assert_eq!(add_path_to_list("", p), Some(format!("['{p}']")));
+        assert_eq!(
+            add_path_to_list("['/a/']", p),
+            Some(format!("['/a/', '{p}']"))
+        );
+        assert_eq!(add_path_to_list(&format!("['/a/', '{p}']"), p), None); // already there
+    }
 }

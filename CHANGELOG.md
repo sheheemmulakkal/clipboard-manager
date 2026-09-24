@@ -4,6 +4,65 @@ All notable changes to Clipboard Manager will be documented here.
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-09-24
+
+### Added
+- **New design**: dark theme by default (`theme = "light"` / `"system"`),
+  rounded window, header with keep-open pin, ☰ menu and close button,
+  search box with a Ctrl+K hint, and rows with a colour dot, content-type
+  icon or image thumbnail, title, tag pill and hover actions.
+- **Content types**: URLs, emails, paths, shell commands, code, colours and
+  secrets get their own icon and title; search and filter chips use them.
+- **Tags** (Work, Personal, Security, Ideas, Snippets, or your own) and a new
+  **right-click menu** with label and colour sub-menus.
+- **Edit** an item's title and text (Ctrl+E).
+- **Notes**: attach longer, searchable text to any item (menu → Add note…).
+- Rows show the copied content (or your label) in bold; the type is shown
+  by the icon. Explicitly coloured rows are tinted in that colour.
+- Pinned items are grouped under a PINNED header above RECENT items.
+- Digits 1–9 paste directly while the search is empty (keycaps show the
+  numbers); Ctrl+K or / switches digits to searching.
+- **Full preview** of long text and images (Space).
+- **Quick paste** with Alt+1–9.
+- **Filter chips**: All, Pinned, Text, Images, Links, Code and each tag.
+- **Scroll-to-top** button and Home/End navigation.
+- **Pause capture** from the menu, the tray or the command line.
+- **System tray icon** (show/hide, pause, settings, quit).
+- **Command line**: `show`, `toggle`, `pause`, `resume`, `toggle-pause`,
+  `clear`, `list`, `quit`, `reload`.
+- **Wayland (GNOME)** support: background capture via XWayland, paste via the
+  Remote Desktop portal (permission asked once), hotkey as a GNOME shortcut.
+- `ignore_apps`, `max_text_bytes`, `expire_after_days`, `tray_icon`,
+  `popup_width`/`popup_height` options; every option documented in the
+  generated config file.
+- Errors (bad config, hotkey not available) are shown as notifications and
+  written to `~/.local/state/clipboard-manager/clipboard-manager.log`.
+- `CLIPBOARD_MANAGER_PROFILE=dev` for running a development instance.
+
+### Changed
+- **Copying an item that is already in the history moves it to the top**
+  (keeping its pin, label, tag and colour) instead of being ignored.
+- Picking an item in the popup also moves it to the top.
+- The clipboard is watched through change notifications instead of being
+  read every 500 ms.
+- "Clear all" can be undone even if you delete or pin items meanwhile.
+- The popup opens inside the monitor under the cursor.
+- History format **V5** (adds tags and notes). V1–V4 files still load.
+- Application id is now `io.github.sheheemmulakkal.ClipboardManager`.
+
+### Fixed
+- One oversized entry could make the rest of the history unreadable.
+- Passwords marked as secret by password managers were recorded.
+- The history file and image folder were readable by other users (now 0600/0700).
+- A screenshot sitting on the clipboard was re-encoded every 500 ms.
+- Items copied within the same second were listed in the wrong order.
+- Pressing Down in the search box skipped the first item.
+- Invalid config or hotkey made the background process exit silently.
+- The popup ignored its position on first open under GNOME.
+
+### Removed
+- `nerd_font` and `popup_max_items` options (ignored if still present).
+
 ## [1.2.0] - 2026-02-27
 
 ### Added

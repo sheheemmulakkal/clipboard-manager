@@ -1,15 +1,79 @@
-.TH CLIPBOARD-MANAGER 1 "2025" "clipboard-manager" "User Commands"
+.TH CLIPBOARD-MANAGER 1 "2026" "clipboard-manager 2.0.0" "User Commands"
 .SH NAME
-clipboard-manager \- clipboard history manager for Ubuntu
+clipboard-manager \- clipboard history for Linux (X11 and Wayland)
 .SH SYNOPSIS
 .B clipboard-manager
+[\fICOMMAND\fR]
 .SH DESCRIPTION
-Clipboard Manager runs in the background and captures clipboard history.
-Press Super+V at any time to see your recent clipboard items and paste
-any of them into the currently focused window.
+Clipboard Manager runs in the background and records text and images you
+copy. Press Ctrl+Alt+C (configurable) to open the history popup and paste
+any item into the window you were using.
+.PP
+Without a command, starts the clipboard manager in the background, or opens
+the popup if it is already running.
+.SH COMMANDS
+.TP
+.B show
+Open the history popup (starts the clipboard manager if it isn't running).
+.TP
+.B toggle
+Open the popup, or close it if it is open. Suitable for a custom keyboard
+shortcut on any desktop.
+.TP
+.B pause\fR, \fBresume\fR, \fBtoggle-pause
+Stop or restart recording the clipboard.
+.TP
+.B clear
+Remove all unpinned items.
+.TP
+.B list \fR[\fB\-\-limit\fR \fIN\fR]
+Print the most recent items (default 20).
+.TP
+.B quit
+Stop the running instance.
+.TP
+.B reload
+Restart the running instance (re-reads the configuration).
+.SH KEYS IN THE POPUP
+.TP
+.B Enter\fR, click
+Paste the selected item.
+.TP
+.B 1 \fR\(en\fB 9\fR, \fBAlt+1 \fR\(en\fB Alt+9
+Paste the first nine items directly. Plain digits paste while the search is
+empty; after Ctrl+K, / or a click in the search box they are typed into the
+search. Alt+digit always pastes.
+.TP
+.B Space
+Preview the full item.
+.TP
+.B Ctrl+C\fR, \fBCtrl+E\fR, \fBCtrl+P\fR, \fBDelete
+Copy, edit (title, text, note), pin/unpin, delete the selected item.
+.TP
+.B Menu\fR, \fBShift+F10\fR, right click
+Open the item menu (labels, colours, preview, delete).
+.TP
+.B Ctrl+K\fR, \fB/
+Focus the search box.
+.TP
+.B Home\fR, \fBEnd\fR, \fBEsc
+Jump to top/bottom; clear the search or close.
 .SH FILES
 .TP
 ~/.config/clipboard-manager/config.toml
-User configuration file.
+User configuration (every option is documented in the file).
+.TP
+~/.local/share/clipboard-manager/
+History and captured images (private to the user).
+.TP
+~/.local/state/clipboard-manager/clipboard-manager.log
+Log of the background process.
+.SH ENVIRONMENT
+.TP
+.B CLIPBOARD_MANAGER_PROFILE=dev
+Run a separate development instance with its own data and D-Bus name.
+.TP
+.B RUST_LOG=debug
+Stay in the foreground and print a debug log.
 .SH AUTHOR
 Clipboard Manager contributors.

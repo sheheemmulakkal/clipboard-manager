@@ -1,8 +1,8 @@
 [package]
 name = "clipboard-manager"
-version = "1.2.0"
+version = "2.0.0"
 edition = "2021"
-description = "Clipboard history manager for Ubuntu — press Ctrl+Alt+C to open clipboard history"
+description = "Clipboard history manager for Linux — press Ctrl+Alt+C to open clipboard history"
 license = "MIT"
 readme = "README.md"
 homepage = "https://github.com/sheheemmulakkal/clipboard-manager"
@@ -15,14 +15,14 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
-chrono = "0.4"
 ksni = { version = "0.3", features = ["blocking"] }
 dirs = "5"
 ashpd = "0.9"
-tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time"] }
 futures-util = "0.3"
 evdev = "0.12"
 sha2 = { version = "0.10", optional = true }
+async-channel = "2"
 
 
 [dependencies.gtk4]
@@ -69,13 +69,13 @@ maintainer = "sheheemmulakkal <sheheemmulakkal@users.noreply.github.com>"
 copyright = "2025, sheheemmulakkal"
 license-file = ["LICENSE", "0"]
 extended-description = """\
-Clipboard Manager runs silently in the background and captures your \
-clipboard history. Press Ctrl+Alt+C at any time to see a popup list of \
-your recent clipboard items and paste any of them into the currently \
-focused window. Similar to the Windows Win+V experience. Requires an \
-X11 session (select Ubuntu on Xorg at login).\
+Clipboard Manager runs silently in the background and records the text \
+and images you copy. Press Ctrl+Alt+C to open a searchable history popup \
+and paste any item into the window you were using. Pin, label, tag and \
+colour items, preview them, and paste with Alt+1-9. Works on X11 and \
+Wayland (GNOME).\
 """
-depends = "$auto, libgtk-4-1, libglib2.0-0, libgdk-pixbuf-2.0-0"
+depends = "$auto, libgtk-4-1, libglib2.0-0, libgdk-pixbuf-2.0-0, librsvg2-common"
 section = "utils"
 priority = "optional"
 assets = [

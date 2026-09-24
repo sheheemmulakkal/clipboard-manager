@@ -14,6 +14,19 @@ pub trait Platform: Send + Sync {
     /// Returns `None` on Wayland (no active-window API).
     fn capture_active_window(&self) -> Option<u64>;
 
+    /// WM_CLASS (instance, class) of the focused window, lowercase as sent.
+    /// `None` when unknown (always on Wayland).
+    fn active_window_class(&self) -> Option<Vec<String>> {
+        None
+    }
+
+    /// Raw target names offered by the CLIPBOARD owner, when the backend can
+    /// list them. (GDK's X11 backend hides targets that aren't MIME types,
+    /// such as `x-kde-passwordManagerHint`.)
+    fn clipboard_targets(&self) -> Option<Vec<String>> {
+        None
+    }
+
     /// Paste clipboard contents.
     ///
     /// * X11  – activates `prev_window` (if `Some`) then sends Ctrl+V via XTest.
@@ -39,9 +52,9 @@ pub trait Platform: Send + Sync {
 
     /// Move the GTK4 popup window to screen position (x, y).
     ///
-    /// * X11     – obtains the X11 window ID via `gdk4-x11` and calls
-    ///             `configure_window`.
-    /// * Wayland – no-op; the compositor positions the window.
+    /// * X11: obtains the X11 window ID via `gdk4-x11` and calls
+    ///   `configure_window`.
+    /// * Wayland: no-op; the compositor positions the window.
     fn move_popup(&self, window: &gtk4::Window, x: i32, y: i32);
 
     /// Returns `true` if mouse button 1 is physically held down.
