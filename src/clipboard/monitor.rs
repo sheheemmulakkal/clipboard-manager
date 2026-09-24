@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -24,6 +24,7 @@ struct State {
     last_image_hash: RefCell<Option<[u8; 32]>>,
     image_dir:       PathBuf,
     max_text_bytes:  usize,
+    paused:          Rc<Cell<bool>>,
     on_change:       Box<dyn Fn()>,
 }
 
@@ -49,6 +50,7 @@ impl ClipboardMonitor {
     pub fn start(
         store:     Rc<RefCell<Box<dyn Store>>>,
         config:    &AppConfig,
+        paused:    Rc<Cell<bool>>,
         on_change: impl Fn() + 'static,
     ) -> Self {
         let state = Rc::new(State {
@@ -57,6 +59,7 @@ impl ClipboardMonitor {
             last_image_hash: RefCell::new(None),
             image_dir:       crate::paths::image_dir(),
             max_text_bytes:  config.max_text_bytes,
+            paused,
             on_change:       Box::new(on_change),
         });
 
@@ -83,6 +86,11 @@ fn on_clipboard_changed(clipboard: &gdk4::Clipboard, state: &Rc<State>) {
     if clipboard.is_local() {
         state.last_text.borrow_mut().clear();
         *state.last_image_hash.borrow_mut() = None;
+        return;
+    }
+    // Capture paused by the user: whatever is copied now is never recorded.
+    if state.paused.get() {
+        tracing::debug!("[monitor] paused — change ignored");
         return;
     }
 

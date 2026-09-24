@@ -67,6 +67,8 @@ pub struct ClipboardPopup {
     suppress_close:      Rc<Cell<u32>>,
     size:                (i32, i32),
     screen_sizes:        Rc<Vec<(u32, u32)>>,
+    paused_badge:        Label,
+    pause_item:          Label,
 }
 
 impl ClipboardPopup {
@@ -134,6 +136,12 @@ impl ClipboardPopup {
         title.set_hexpand(true);
         title.set_halign(gtk4::Align::Start);
 
+        let paused_badge = Label::new(Some("Paused"));
+        paused_badge.add_css_class("paused-badge");
+        paused_badge.set_valign(gtk4::Align::Center);
+        paused_badge.set_tooltip_text(Some("Clipboard capture is paused"));
+        paused_badge.set_visible(false);
+
         let keep_open = Rc::new(Cell::new(false));
         let pin_btn = icon_button(Icon::Pin, &theme.icon_muted, 18, "header-btn");
         pin_btn.set_tooltip_text(Some("Keep open"));
@@ -158,8 +166,8 @@ impl ClipboardPopup {
 
         let menu_btn = icon_button(Icon::Menu, &theme.icon_muted, 18, "header-btn");
         menu_btn.set_tooltip_text(Some("Menu"));
+        let (menu, pause_item) = build_header_menu(&theme, &handler, &suppress_close);
         {
-            let menu = build_header_menu(&theme, &handler, &suppress_close);
             menu.set_parent(&menu_btn);
             menu_btn.connect_clicked(move |_| menu.popup());
         }
@@ -169,6 +177,7 @@ impl ClipboardPopup {
 
         header_row.append(&app_icon);
         header_row.append(&title);
+        header_row.append(&paused_badge);
         header_row.append(&pin_btn);
         header_row.append(&menu_btn);
         header_row.append(&close_btn);
@@ -521,6 +530,7 @@ impl ClipboardPopup {
             platform, theme, show_timestamps: config.show_timestamps,
             search_entry, suppress_close, size,
             screen_sizes: Rc::new(monitor_sizes(&display)),
+            paused_badge, pause_item,
         }
     }
 
@@ -696,6 +706,12 @@ impl ClipboardPopup {
         self.window.set_visible(false);
     }
 
+    /// Reflect the capture pause state in the header and menu.
+    pub fn set_paused(&self, paused: bool) {
+        self.paused_badge.set_visible(paused);
+        self.pause_item.set_text(if paused { "Resume capture" } else { "Pause capture" });
+    }
+
     pub fn show_about(&self) {
         let about = gtk4::AboutDialog::builder()
             .transient_for(&self.window)
@@ -726,13 +742,31 @@ impl ClipboardPopup {
 
 // ── Header menu ───────────────────────────────────────────────────────────────
 
-fn build_header_menu(theme: &Theme, handler: &EventHandler, suppress: &Rc<Cell<u32>>) -> gtk4::Popover {
+/// The ☰ menu; also returns the label of the pause item (its text flips).
+fn build_header_menu(theme: &Theme, handler: &EventHandler, suppress: &Rc<Cell<u32>>) -> (gtk4::Popover, Label) {
     let popover = gtk4::Popover::new();
     popover.add_css_class("cm-menu");
     popover.set_has_arrow(false);
     popover.set_position(gtk4::PositionType::Bottom);
 
     let vbox = gtk4::Box::new(Orientation::Vertical, 0);
+
+    let pause_btn = menu_item(Icon::Pause, "Pause capture", None, &theme.icon_muted);
+    let pause_label = pause_btn
+        .child()
+        .and_then(|row| row.first_child()?.next_sibling())
+        .and_downcast::<Label>()
+        .expect("menu_item layout: [icon, label, ...]");
+    {
+        let h = handler.clone();
+        let p = popover.clone();
+        pause_btn.connect_clicked(move |_| {
+            p.popdown();
+            h.emit(PopupEvent::Menu(MenuAction::TogglePause));
+        });
+    }
+    vbox.append(&pause_btn);
+
     let items: [(Icon, &str, fn() -> PopupEvent); 4] = [
         (Icon::Trash,     "Clear history", || PopupEvent::ClearAll),
         (Icon::Settings,  "Settings",      || PopupEvent::Menu(MenuAction::OpenSettings)),
@@ -754,7 +788,7 @@ fn build_header_menu(theme: &Theme, handler: &EventHandler, suppress: &Rc<Cell<u
     }
     popover.set_child(Some(&vbox));
     track_popover(&popover, suppress);
-    popover
+    (popover, pause_label)
 }
 
 /// A flat menu row: `[icon] label ……… accel`.

@@ -117,11 +117,14 @@ impl App {
             let platform = platform::detect();
 
             let popup = ClipboardPopup::new(app, Arc::clone(&platform), &config);
-            let controller = Controller::new(config.clone(), Rc::clone(&store), popup, Arc::clone(&platform));
+            let paused = Rc::new(Cell::new(false));
+            let controller = Controller::new(
+                config.clone(), Rc::clone(&store), popup, Arc::clone(&platform), Rc::clone(&paused),
+            );
 
             // ── Clipboard monitor ─────────────────────────────────────────
             let store_for_cb = Rc::clone(&store);
-            let _monitor = ClipboardMonitor::start(Rc::clone(&store), &config, move || {
+            let _monitor = ClipboardMonitor::start(Rc::clone(&store), &config, paused, move || {
                 tracing::debug!("[monitor] store now has {} item(s)", store_for_cb.borrow().len());
             });
 

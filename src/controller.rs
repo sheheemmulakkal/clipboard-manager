@@ -27,6 +27,14 @@ pub struct Controller {
     platform:    Arc<dyn Platform>,
     prev_window: Cell<Option<u64>>,
     query:       RefCell<String>,
+    /// Shared with the clipboard monitor, which skips changes while set.
+    paused:      Rc<Cell<bool>>,
+    pause_listeners: RefCell<Vec<Box<dyn Fn(bool)>>>,
+}
+
+/// New pause state for a request (`None` = toggle).
+fn resolve_paused(current: bool, request: Option<bool>) -> bool {
+    request.unwrap_or(!current)
 }
 
 impl Controller {
@@ -35,6 +43,7 @@ impl Controller {
         store:    Rc<RefCell<Box<dyn Store>>>,
         popup:    ClipboardPopup,
         platform: Arc<dyn Platform>,
+        paused:   Rc<Cell<bool>>,
     ) -> Rc<Self> {
         let this = Rc::new(Self {
             config,
@@ -43,6 +52,8 @@ impl Controller {
             platform,
             prev_window: Cell::new(None),
             query:       RefCell::new(String::new()),
+            paused,
+            pause_listeners: RefCell::new(Vec::new()),
         });
         let weak = Rc::downgrade(&this);
         this.popup.set_event_handler(Rc::new(move |ev| {
@@ -56,6 +67,22 @@ impl Controller {
     pub fn handle_app(&self, ev: AppEvent) {
         match ev {
             AppEvent::Show { prev_window } => self.show(prev_window),
+            AppEvent::SetPaused(request) => self.set_paused(request),
+        }
+    }
+
+    /// Call `f` with the new state whenever capture is paused or resumed.
+    pub fn on_pause_changed(&self, f: impl Fn(bool) + 'static) {
+        self.pause_listeners.borrow_mut().push(Box::new(f));
+    }
+
+    fn set_paused(&self, request: Option<bool>) {
+        let paused = resolve_paused(self.paused.get(), request);
+        self.paused.set(paused);
+        tracing::info!("[capture] {}", if paused { "paused" } else { "resumed" });
+        self.popup.set_paused(paused);
+        for f in self.pause_listeners.borrow().iter() {
+            f(paused);
         }
     }
 
@@ -77,6 +104,7 @@ impl Controller {
                 self.popup.hide();
                 open_settings();
             }
+            MenuAction::TogglePause => self.set_paused(None),
             MenuAction::About => self.popup.show_about(),
             MenuAction::Quit => self.popup.quit(),
         }
@@ -243,5 +271,18 @@ fn set_clipboard_content(content: &ClipboardContent) {
                 Err(e) => tracing::warn!("[clipboard] failed to load image {}: {e}", crate::paths::hex(hash)),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pause_request_resolution() {
+        assert!(resolve_paused(false, None));
+        assert!(!resolve_paused(true, None));
+        assert!(resolve_paused(true, Some(true)));
+        assert!(!resolve_paused(true, Some(false)));
     }
 }
