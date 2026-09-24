@@ -38,6 +38,15 @@ pub struct RowContext {
     pub tags:            Rc<Vec<String>>,
 }
 
+/// Colour of the row's dot: its own colour, else its tag's colour.
+fn dot_color(entry: &ClipboardEntry) -> Option<&'static str> {
+    entry
+        .color
+        .as_deref()
+        .and_then(normalize_color)
+        .or_else(|| entry.tag.as_deref().filter(|t| !t.trim().is_empty()).map(tag_color))
+}
+
 /// Opens the context menu, pointing at a position inside the row (or the row).
 type OpenMenuAt = dyn Fn(Option<(f64, f64)>);
 
@@ -95,7 +104,7 @@ pub fn build_item_row(
     // ── Colour dot ──────────────────────────────────────────────────────
     let dot = gtk4::Box::new(Orientation::Horizontal, 0);
     dot.add_css_class("color-dot");
-    dot.add_css_class(&format!("dot-{}", color.unwrap_or("none")));
+    dot.add_css_class(&format!("dot-{}", dot_color(entry).unwrap_or("none")));
     dot.set_valign(gtk4::Align::Center);
     hbox.append(&dot);
 
@@ -324,6 +333,16 @@ mod tests {
         assert_eq!(t.lines().count(), TOOLTIP_MAX_LINES);
         assert!(t.ends_with('\u{2026}'));
         assert_eq!(tooltip_preview("short"), "short");
+    }
+
+    #[test]
+    fn dot_uses_own_colour_then_tag_colour() {
+        let mut e = ClipboardEntry::new_text(1, "x".into());
+        assert_eq!(dot_color(&e), None);
+        e.tag = Some("Security".into());
+        assert_eq!(dot_color(&e), Some("purple"));
+        e.color = Some("peach".into()); // legacy name
+        assert_eq!(dot_color(&e), Some("orange"));
     }
 
     #[test]

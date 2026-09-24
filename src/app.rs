@@ -62,7 +62,11 @@ impl App {
     /// without the system-wide entry (e.g. `cargo install`). Never re-created
     /// after the user deletes it, so autostart can be turned off.
     fn autostart_if_needed() -> Result<()> {
-        const SYSTEM_ENTRY: &str = "/etc/xdg/autostart/clipboard-manager.desktop";
+        // Installed by the .deb (current and older package names).
+        const SYSTEM_ENTRIES: [&str; 2] = [
+            "/etc/xdg/autostart/clipboard-manager-autostart.desktop",
+            "/etc/xdg/autostart/clipboard-manager.desktop",
+        ];
         let marker = crate::paths::state_dir().join("autostart-installed");
         let autostart_dir = dirs::config_dir()
             .ok_or_else(|| anyhow!("no config dir"))?
@@ -70,7 +74,7 @@ impl App {
         let dest = autostart_dir.join("clipboard-manager.desktop");
         if !should_write_autostart(
             dest.exists(),
-            std::path::Path::new(SYSTEM_ENTRY).exists(),
+            SYSTEM_ENTRIES.iter().any(|p| std::path::Path::new(p).exists()),
             marker.exists(),
         ) {
             return Ok(());

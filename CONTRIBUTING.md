@@ -21,7 +21,9 @@ you need to get started.
 **Requirements:**
 - Ubuntu 22.04 or newer (GTK4 is the baseline)
 - Rust stable (install via [rustup](https://rustup.rs))
-- An X11 session is easiest for testing (select "Ubuntu on Xorg" at login)
+- `scripts/dev-run.sh` runs a debug build in a nested X server (Xephyr) with its
+  own D-Bus session and data directories — nothing touches your real clipboard
+- Or `CLIPBOARD_MANAGER_PROFILE=dev RUST_LOG=debug cargo run` next to an installed copy
 
 **Install system dependencies:**
 ```bash
@@ -55,13 +57,18 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for a full walkthrough of the code.
 The short version:
 
 ```
-src/app.rs          — main wiring: GTK activation, poll loop, all closures
-src/clipboard/      — entry type (ClipboardContent enum) + clipboard monitor
-src/store/          — Store trait, MemoryStore, PersistentStore, binary format
-src/platform/       — X11 / Wayland backend (Strategy pattern)
-src/hotkey/         — X11 / Wayland hotkey backend (Strategy pattern)
-src/ui/             — GTK popup window, item rows, CSS generation
+src/main.rs, cli.rs — command line, daemonize, Wayland backend choice
+src/app.rs          — GTK application wiring and D-Bus command line
+src/controller.rs   — turns popup/app events into store changes + refresh
+src/clipboard/      — entry types, content-kind detection, clipboard monitor
+src/store/          — Store trait, MemoryStore, PersistentStore, history.bin format
+src/platform/       — X11 / Wayland backend (paste, focus, placement)
+src/hotkey/         — X11 / Wayland hotkey backend
+src/ui/             — popup, rows, menus, editor, preview, icons, theme, CSS
 ```
+
+Before sending a change: `cargo clippy --all-targets -- -D warnings` and
+`cargo test` must pass (CI runs both on Ubuntu 22.04).
 
 ---
 

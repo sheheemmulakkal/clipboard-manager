@@ -230,6 +230,21 @@ mod tests {
     }
 
     #[test]
+    fn shipped_default_config_matches_built_in_defaults() {
+        let file = AppConfig::from_toml(include_str!("../config/default.toml")).unwrap();
+        let d = AppConfig::default();
+        assert_eq!(file.max_history, d.max_history);
+        assert_eq!(file.hotkey, d.hotkey);
+        assert_eq!(file.theme, d.theme);
+        assert_eq!((file.popup_width, file.popup_height), (d.popup_width, d.popup_height));
+        assert_eq!(file.max_text_bytes, d.max_text_bytes);
+        assert_eq!(file.expire_after_days, d.expire_after_days);
+        assert_eq!(file.ignore_apps, d.ignore_apps);
+        assert_eq!(file.tray_icon, d.tray_icon);
+        assert_eq!(file.clear_undo_timeout_secs, d.clear_undo_timeout_secs);
+    }
+
+    #[test]
     fn wrong_type_is_an_error() {
         assert!(AppConfig::from_toml("max_history = \"oops\"").is_err());
     }

@@ -1,31 +1,79 @@
-# Clipboard Manager Configuration
-# Copy to ~/.config/clipboard-manager/config.toml to customize
+# Clipboard Manager configuration
+# Apply changes with:  clipboard-manager reload
+# Every option is optional; the values below are the defaults.
 
+# ── History ──────────────────────────────────────────────────────────────────
+
+# Number of items kept. Pinned items are never evicted.
 max_history = 50
 
-# Hotkey to open the clipboard history popup.
-# Format: modifier+modifier+key  (case-insensitive, order doesn't matter)
+# Copying something that is already in the history moves it to the top
+# instead of adding a duplicate.
+deduplicate = true
+
+# Texts larger than this (bytes) are not recorded.
+max_text_bytes = 1048576
+
+# Delete unpinned items older than this many days. 0 = keep forever.
+expire_after_days = 0
+
+# Never record what is copied while one of these apps is focused (X11
+# WM_CLASS, case-insensitive). Password managers that mark their clipboard
+# content as secret are always skipped, on X11 and Wayland.
+ignore_apps = [
+  "keepassxc", "org.keepassxc.KeePassXC", "1password", "bitwarden", "Enpass",
+  "seahorse", "gnome-keyring", "kwalletmanager5", "kwalletmanager",
+]
+
+# ── Hotkey ───────────────────────────────────────────────────────────────────
+
+# Format: modifier+modifier+key (case-insensitive, any order)
 # Modifiers: ctrl (or control), alt, super (or win), shift
-# Keys:      any letter a-z, or: space, return, escape, tab, backspace, f1-f12
-# Examples:
-#   hotkey = "super+v"          # Win+V  (like Windows clipboard history)
-#   hotkey = "ctrl+alt+c"       # Ctrl+Alt+C  (default)
-#   hotkey = "super+shift+v"    # Win+Shift+V
+# Keys:      a-z, 0-9, space, return, escape, tab, backspace, f1-f12
+# Examples:  "super+v", "ctrl+alt+c", "super+shift+v"
+# On Wayland (GNOME) the hotkey is set up as a GNOME custom shortcut that
+# runs `clipboard-manager toggle`.
 hotkey = "ctrl+alt+c"
 
-# Look of the popup: "dark" (default), "light", or "system" (follow the GTK theme).
+# ── Popup ────────────────────────────────────────────────────────────────────
+
+# "dark" (default), "light", or "system" (follow the GTK theme).
 theme = "dark"
 
 popup_width = 440
 popup_height = 560
 show_timestamps = true
-deduplicate = true
 
-# Position the popup near the mouse cursor when opened.
-# Set to false to let the window manager decide placement.
+# Open the popup next to the mouse cursor (X11). Otherwise it is centred.
 popup_follow_cursor = true
 
-# Seconds to wait before a "Clear All" becomes permanent.
-# During this window the user can click "Undo" in the popup to restore items.
-# Set to 0 to disable the grace period and clear immediately.
+# Seconds during which "Clear history" can be undone. 0 = no undo bar.
 clear_undo_timeout_secs = 5
+
+# Show an icon in the system tray (needs the AppIndicator extension on GNOME;
+# enabled by default on Ubuntu).
+tray_icon = true
+
+# ── Colour overrides (optional) ──────────────────────────────────────────────
+# Any value set here wins over the theme. Colours are CSS colours.
+#
+# [colors]
+# background        = "#1b1d22"
+# header_background = "#25282f"   # search box, tiles, undo bar
+# border            = "rgba(255,255,255,0.08)"
+# text              = "#eceef1"
+# text_muted        = "#9aa0a8"
+# accent            = "#f97316"   # pinned rows, focus, buttons
+# error             = "#ef4444"   # delete
+# row_hover         = "rgba(255,255,255,0.04)"
+# selection         = "rgba(249,115,22,0.12)"
+
+# ── Size overrides in px (optional) ──────────────────────────────────────────
+#
+# [sizes]
+# font_preview = 13
+# font_time    = 11
+# font_title   = 13
+# font_buttons = 13
+# font_undo    = 12
+# row_height   = 56
