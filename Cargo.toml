@@ -76,7 +76,7 @@ your recent clipboard items and paste any of them into the currently \
 focused window. Similar to the Windows Win+V experience. Requires an \
 X11 session (select Ubuntu on Xorg at login).\
 """
-depends = "$auto, libgtk-4-1, libglib2.0-0, libgdk-pixbuf-2.0-0"
+depends = "$auto, libgtk-4-1, libglib2.0-0, libgdk-pixbuf-2.0-0, librsvg2-common"
 section = "utils"
 priority = "optional"
 assets = [
