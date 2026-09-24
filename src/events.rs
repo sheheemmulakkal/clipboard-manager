@@ -38,6 +38,7 @@ pub enum RowAction {
 pub enum PopupEvent {
     Row(u64, RowAction),
     SearchChanged(String),
+    ChipChanged(crate::ui::filter::Chip),
     ClearAll,
     Menu(MenuAction),
 }

@@ -34,9 +34,57 @@ pub fn matches_query(e: &ClipboardEntry, query: &str) -> bool {
         || e.tag.as_deref().is_some_and(|t| t.to_lowercase().contains(&q))
 }
 
-/// The entries the popup should show for `query`, in display order.
-pub fn visible(all: Vec<ClipboardEntry>, query: &str) -> Vec<ClipboardEntry> {
-    sorted(all).into_iter().filter(|e| matches_query(e, query)).collect()
+/// Quick filters shown as chips under the search box.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub enum Chip {
+    #[default]
+    All,
+    Pinned,
+    /// Every text entry (anything that isn't an image).
+    Text,
+    Images,
+    Links,
+    Code,
+    /// Entries with this tag (case-insensitive).
+    Tag(String),
+}
+
+impl Chip {
+    pub fn label(&self) -> String {
+        match self {
+            Chip::All => "All".into(),
+            Chip::Pinned => "Pinned".into(),
+            Chip::Text => "Text".into(),
+            Chip::Images => "Images".into(),
+            Chip::Links => "Links".into(),
+            Chip::Code => "Code".into(),
+            Chip::Tag(t) => t.clone(),
+        }
+    }
+
+    pub fn matches(&self, e: &ClipboardEntry) -> bool {
+        let kind = || match &e.content {
+            ClipboardContent::Text(t) => Some(ContentKind::detect(t)),
+            ClipboardContent::Image { .. } => None,
+        };
+        match self {
+            Chip::All => true,
+            Chip::Pinned => e.pinned,
+            Chip::Text => !e.is_image(),
+            Chip::Images => e.is_image(),
+            Chip::Links => kind() == Some(ContentKind::Url),
+            Chip::Code => matches!(kind(), Some(ContentKind::Code | ContentKind::Shell)),
+            Chip::Tag(t) => e.tag.as_deref().is_some_and(|x| x.eq_ignore_ascii_case(t)),
+        }
+    }
+}
+
+/// The entries the popup should show for `query` and `chip`, in display order.
+pub fn visible(all: Vec<ClipboardEntry>, query: &str, chip: &Chip) -> Vec<ClipboardEntry> {
+    sorted(all)
+        .into_iter()
+        .filter(|e| chip.matches(e) && matches_query(e, query))
+        .collect()
 }
 
 #[cfg(test)]
@@ -64,6 +112,28 @@ mod tests {
         let got = sorted(vec![text(1, "a", 5), text(2, "b", 5), text(3, "c", 5)]);
         let ids: Vec<u64> = got.iter().map(|e| e.id).collect();
         assert_eq!(ids, vec![3, 2, 1]);
+    }
+
+    #[test]
+    fn chips_filter_by_kind_pin_and_tag() {
+        let mut pinned = text(1, "note", 1);
+        pinned.pinned = true;
+        let url = text(2, "https://example.com", 2);
+        let code = text(3, "fn main() { let x = 1; }", 3);
+        let img = ClipboardEntry::new_image(4, [0; 32], 10, 10);
+        let mut tagged = text(5, "abc", 5);
+        tagged.tag = Some("Work".into());
+        let all = vec![pinned, url, code, img, tagged];
+        let ids = |chip: &Chip| -> Vec<u64> {
+            visible(all.clone(), "", chip).iter().map(|e| e.id).collect()
+        };
+        assert_eq!(ids(&Chip::All).len(), 5);
+        assert_eq!(ids(&Chip::Pinned), vec![1]);
+        assert_eq!(ids(&Chip::Images), vec![4]);
+        assert_eq!(ids(&Chip::Links), vec![2]);
+        assert_eq!(ids(&Chip::Code), vec![3]);
+        assert_eq!(ids(&Chip::Tag("work".into())), vec![5]);
+        assert_eq!(ids(&Chip::Text), vec![1, 5, 3, 2]); // every non-image entry, pinned first
     }
 
     #[test]

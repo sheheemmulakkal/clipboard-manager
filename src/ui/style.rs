@@ -130,6 +130,35 @@ window.no-compositing .popup-card {{
     font-size: 12px;
 }}
 
+/* ── Filter chips ────────────────────────────────────────────────────── */
+.chip-scroll {{
+    margin: 0 12px 8px 12px;
+}}
+.chip {{
+    background-image: none;
+    background-color: {surface};
+    color: {text_muted};
+    border: 1px solid {border};
+    border-radius: 999px;
+    padding: 2px 12px;
+    min-height: 24px;
+    font-size: 12px;
+    box-shadow: none;
+}}
+.chip label {{
+    color: {text_muted};
+}}
+.chip:hover {{
+    background-color: {surface_hover};
+}}
+.chip:checked {{
+    background-color: alpha({accent}, 0.18);
+    border-color: alpha({accent}, 0.5);
+}}
+.chip:checked label {{
+    color: {accent};
+}}
+
 /* ── List ────────────────────────────────────────────────────────────── */
 scrolledwindow, viewport {{
     background: transparent;

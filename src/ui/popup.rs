@@ -14,6 +14,7 @@ use crate::config::{AppConfig, ThemeName};
 use crate::events::{MenuAction, PopupEvent, RowAction};
 use crate::platform::Platform;
 use crate::ui::icons::{self, Icon};
+use crate::ui::filter::Chip;
 use crate::ui::item_row::{build_item_row, RowContext, RowHooks};
 use crate::ui::style::generate_css;
 use crate::ui::theme::Theme;
@@ -69,6 +70,7 @@ pub struct ClipboardPopup {
     screen_sizes:        Rc<Vec<(u32, u32)>>,
     paused_badge:        Label,
     pause_item:          Label,
+    chip_bar:            gtk4::Box,
 }
 
 impl ClipboardPopup {
@@ -200,6 +202,17 @@ impl ClipboardPopup {
         search_box.append(&search_entry);
         search_box.append(&kbd_chip);
         card.append(&search_box);
+
+        // ── Filter chips ──────────────────────────────────────────────────────
+        let chip_bar = gtk4::Box::new(Orientation::Horizontal, 6);
+        chip_bar.add_css_class("chip-bar");
+        let chip_scroll = ScrolledWindow::builder()
+            .hscrollbar_policy(gtk4::PolicyType::External)
+            .vscrollbar_policy(gtk4::PolicyType::Never)
+            .child(&chip_bar)
+            .build();
+        chip_scroll.add_css_class("chip-scroll");
+        card.append(&chip_scroll);
 
         // ── List ──────────────────────────────────────────────────────────────
         let scrolled = ScrolledWindow::builder()
@@ -559,7 +572,7 @@ impl ClipboardPopup {
             platform, theme, show_timestamps: config.show_timestamps,
             search_entry, suppress_close, size,
             screen_sizes: Rc::new(monitor_sizes(&display)),
-            paused_badge, pause_item,
+            paused_badge, pause_item, chip_bar,
         }
     }
 
@@ -571,7 +584,9 @@ impl ClipboardPopup {
     // ── populate ──────────────────────────────────────────────────────────────
 
     /// Rebuild the list. `empty_text` is shown when `entries` is empty.
-    pub fn populate(&self, entries: &[ClipboardEntry], empty_text: &str, tags: Vec<String>) {
+    pub fn populate(&self, entries: &[ClipboardEntry], empty_text: &str, tags: Vec<String>, chip: &Chip) {
+        self.build_chips(&tags, chip);
+
         // If the popup is already visible this is a mutation repopulate (delete/pin/label).
         // Save the scroll position so we can restore it after rebuilding the list.
         let is_repopulate = self.window.is_visible();
@@ -642,6 +657,30 @@ impl ClipboardPopup {
             if let Some(first) = self.list_box.row_at_index(0) {
                 self.list_box.select_row(Some(&first));
             }
+        }
+    }
+
+    /// Rebuild the chip row: fixed filters, then one chip per tag in use.
+    fn build_chips(&self, tags: &[String], active: &Chip) {
+        while let Some(c) = self.chip_bar.first_child() {
+            self.chip_bar.remove(&c);
+        }
+        let fixed = [Chip::All, Chip::Pinned, Chip::Text, Chip::Images, Chip::Links, Chip::Code];
+        let chips = fixed.into_iter().chain(tags.iter().map(|t| Chip::Tag(t.clone())));
+        for chip in chips {
+            let b = gtk4::ToggleButton::with_label(&chip.label());
+            b.add_css_class("chip");
+            b.set_active(&chip == active);
+            let h = self.handler.clone();
+            b.connect_clicked(move |b| {
+                // Clicking the active chip keeps it active.
+                if !b.is_active() {
+                    b.set_active(true);
+                    return;
+                }
+                h.emit(PopupEvent::ChipChanged(chip.clone()));
+            });
+            self.chip_bar.append(&b);
         }
     }
 

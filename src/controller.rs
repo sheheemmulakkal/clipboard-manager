@@ -14,7 +14,8 @@ use crate::config::AppConfig;
 use crate::events::{AppEvent, MenuAction, PopupEvent, RowAction};
 use crate::platform::Platform;
 use crate::store::Store;
-use crate::ui::{filter, ClipboardPopup};
+use crate::ui::filter::{self, Chip};
+use crate::ui::ClipboardPopup;
 
 /// Delay between hiding the popup and sending the paste keystroke, so the
 /// previous window has regained focus.
@@ -27,6 +28,7 @@ pub struct Controller {
     platform:    Arc<dyn Platform>,
     prev_window: Cell<Option<u64>>,
     query:       RefCell<String>,
+    chip:        RefCell<Chip>,
     /// Shared with the clipboard monitor, which skips changes while set.
     paused:      Rc<Cell<bool>>,
     pause_listeners: RefCell<Vec<Box<dyn Fn(bool)>>>,
@@ -52,6 +54,7 @@ impl Controller {
             platform,
             prev_window: Cell::new(None),
             query:       RefCell::new(String::new()),
+            chip:        RefCell::new(Chip::All),
             paused,
             pause_listeners: RefCell::new(Vec::new()),
         });
@@ -102,6 +105,10 @@ impl Controller {
                 *self.query.borrow_mut() = q;
                 self.refresh();
             }
+            PopupEvent::ChipChanged(chip) => {
+                *self.chip.borrow_mut() = chip;
+                self.refresh();
+            }
             PopupEvent::ClearAll => self.clear_all(),
             PopupEvent::Menu(action) => self.handle_menu(action),
         }
@@ -131,13 +138,20 @@ impl Controller {
         let mut tags: Vec<String> = all.iter().filter_map(|e| e.tag.clone()).collect();
         tags.sort_by_key(|t| t.to_lowercase());
         tags.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
-        let entries = filter::visible(all, &query);
-        self.popup.populate(&entries, empty_text, tags);
+        let chip = self.chip.borrow().clone();
+        // A tag chip whose tag no longer exists falls back to "All".
+        let chip = match chip {
+            Chip::Tag(ref t) if !tags.iter().any(|x| x.eq_ignore_ascii_case(t)) => Chip::All,
+            c => c,
+        };
+        let entries = filter::visible(all, &query, &chip);
+        self.popup.populate(&entries, empty_text, tags, &chip);
     }
 
     fn show(&self, prev_window: Option<u64>) {
         self.prev_window.set(prev_window);
         self.query.borrow_mut().clear();
+        *self.chip.borrow_mut() = Chip::All;
         self.popup.clear_search();
         self.refresh();
         if self.config.popup_follow_cursor {
