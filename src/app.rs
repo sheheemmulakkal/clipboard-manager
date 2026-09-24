@@ -127,17 +127,18 @@ impl App {
                     app.activate();
                     return 0;
                 }
-                let args: Vec<String> = cmdline
+                let raw: Vec<String> = cmdline
                     .arguments()
                     .iter()
                     .map(|a| a.to_string_lossy().into_owned())
                     .collect();
+                let (args, token) = crate::cli::split_activation_token(&raw);
                 tracing::debug!("[cli] remote command line: {:?}", &args[1..]);
                 let controller = slot.borrow().clone();
                 // (Output can't be printed into the caller's terminal before
                 // glib 2.80, so remote commands report via the exit code.)
                 let ok = match (crate::cli::parse(&args), controller) {
-                    (Ok(cmd), Some(c)) => c.run_command(cmd),
+                    (Ok(cmd), Some(c)) => c.run_command(cmd, token),
                     _ => false,
                 };
                 if ok { 0 } else { 1 }
@@ -168,8 +169,12 @@ impl App {
 
             // ── Clipboard monitor ─────────────────────────────────────────
             let store_for_cb = Rc::clone(&store);
+            let controller_cb = Rc::downgrade(&controller);
             let _monitor = ClipboardMonitor::start(Rc::clone(&store), &config, Arc::clone(&platform), paused, move || {
                 tracing::debug!("[monitor] store now has {} item(s)", store_for_cb.borrow().len());
+                if let Some(c) = controller_cb.upgrade() {
+                    c.on_store_changed();
+                }
             });
 
             // ── Global hotkey ─────────────────────────────────────────────

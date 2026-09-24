@@ -1,7 +1,7 @@
 //! Right-click menu of a history row, with "Add label" and "Change colour"
 //! sub-pages that slide in inside the same popover.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use gtk4::prelude::*;
@@ -10,7 +10,7 @@ use gtk4::{Button, Label, ListBoxRow, Orientation, Popover, Stack};
 use crate::clipboard::entry::{ClipboardEntry, EntryMeta};
 use crate::events::RowAction;
 use crate::ui::icons::{self, Icon};
-use crate::ui::popup::{menu_item, menu_separator, track_popover};
+use crate::ui::popup::{dispose_popover, menu_item, menu_separator, track_popover, CloseGuard};
 use crate::ui::theme::{normalize_color, tag_color, Theme, COLORS, DEFAULT_TAGS};
 
 pub const MAX_TAG_CHARS: usize = 24;
@@ -39,7 +39,7 @@ pub struct MenuEnv {
     /// Tags used anywhere in the history.
     pub tags:     Rc<Vec<String>>,
     /// The popup's "don't close on focus loss" counter.
-    pub suppress: Rc<Cell<u32>>,
+    pub suppress: Rc<CloseGuard>,
 }
 
 /// Open the menu for `entry`, pointing at `point` inside `row` (or at the row).
@@ -63,6 +63,7 @@ pub fn show(
         popover.set_pointing_to(Some(&gdk4::Rectangle::new(x as i32, y as i32, 1, 1)));
     }
     track_popover(&popover, suppress);
+    popover.add_weak_ref_notify_local(|| tracing::trace!("[popover] freed"));
 
     // The chosen action runs after the popover has closed and been removed
     // from the row: the action usually rebuilds the list (destroying the row).
@@ -75,7 +76,7 @@ pub fn show(
             let emit = Rc::clone(&emit);
             let ui = ui.clone();
             glib::idle_add_local_once(move || {
-                p.unparent();
+                dispose_popover(&p);
                 match choice {
                     Some(Choice::Action(a)) => emit(a),
                     Some(Choice::Edit) => (ui.edit)(),
@@ -263,8 +264,13 @@ fn submenu_item(icon: Icon, label: &str, icon_color: &str, stack: &Stack, page: 
     if let Some(row) = b.child().and_downcast::<gtk4::Box>() {
         row.append(&icons::image(Icon::ChevronRight, icon_color, 14));
     }
-    let stack = stack.clone();
-    b.connect_clicked(move |_| stack.set_visible_child_name(page));
+    // Weak: the button lives inside the stack.
+    let stack = stack.downgrade();
+    b.connect_clicked(move |_| {
+        if let Some(stack) = stack.upgrade() {
+            stack.set_visible_child_name(page);
+        }
+    });
     b
 }
 
@@ -278,8 +284,12 @@ fn back_header(title: &str, theme: &Theme, stack: &Stack) -> Button {
     let b = Button::new();
     b.add_css_class("menu-item");
     b.set_child(Some(&row));
-    let stack = stack.clone();
-    b.connect_clicked(move |_| stack.set_visible_child_name("main"));
+    let stack = stack.downgrade();
+    b.connect_clicked(move |_| {
+        if let Some(stack) = stack.upgrade() {
+            stack.set_visible_child_name("main");
+        }
+    });
     b
 }
 

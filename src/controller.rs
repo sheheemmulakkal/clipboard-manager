@@ -86,9 +86,20 @@ impl Controller {
         }
     }
 
+    /// The monitor recorded something: show it if the popup is open (e.g.
+    /// with "keep open" on), unless a popover is open over the list.
+    pub fn on_store_changed(&self) {
+        if self.popup.is_visible() && !self.popup.is_busy() {
+            self.refresh();
+        }
+    }
+
     /// Execute a command forwarded from another `clipboard-manager` process.
     /// Returns whether it succeeded.
-    pub fn run_command(&self, cmd: Command) -> bool {
+    pub fn run_command(&self, cmd: Command, activation_token: Option<String>) -> bool {
+        if let Some(t) = &activation_token {
+            self.popup.set_startup_id(t);
+        }
         let prev = || self.platform.capture_active_window();
         match cmd {
             Command::Start | Command::Show => self.handle_app(AppEvent::Show { prev_window: prev() }),

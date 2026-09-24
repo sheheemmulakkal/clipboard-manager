@@ -29,6 +29,46 @@ struct UndoPending {
     on_undo:   Rc<dyn Fn()>,
 }
 
+// ── Close guard ───────────────────────────────────────────────────────────────
+
+/// Keeps the popup open while popovers/dialogs are shown (they take focus,
+/// which looks like the popup losing it). When the last hold is released,
+/// `on_release` re-checks focus: a real focus loss that happened meanwhile
+/// would otherwise leave the popup open and unfocused.
+#[derive(Default)]
+pub struct CloseGuard {
+    count:      Cell<u32>,
+    on_release: RefCell<Option<Rc<dyn Fn()>>>,
+}
+
+impl CloseGuard {
+    pub fn hold(&self) {
+        self.count.set(self.count.get() + 1);
+    }
+
+    pub fn release(&self) {
+        let n = self.count.get();
+        if n == 0 {
+            return;
+        }
+        self.count.set(n - 1);
+        if n == 1 {
+            let cb = self.on_release.borrow().clone();
+            if let Some(cb) = cb {
+                cb();
+            }
+        }
+    }
+
+    pub fn is_held(&self) -> bool {
+        self.count.get() > 0
+    }
+
+    fn set_on_release(&self, f: impl Fn() + 'static) {
+        *self.on_release.borrow_mut() = Some(Rc::new(f));
+    }
+}
+
 // ── Event handler ─────────────────────────────────────────────────────────────
 
 /// Shared slot for the controller's event callback. Cloned into every
@@ -67,7 +107,7 @@ pub struct ClipboardPopup {
     theme:               Rc<Theme>,
     show_timestamps:     bool,
     search_entry:        SearchEntry,
-    suppress_close:      Rc<Cell<u32>>,
+    suppress_close:      Rc<CloseGuard>,
     size:                (i32, i32),
     screen_sizes:        Rc<Vec<(u32, u32)>>,
     paused_badge:        Label,
@@ -165,7 +205,7 @@ impl ClipboardPopup {
             });
         }
 
-        let suppress_close: Rc<Cell<u32>> = Rc::new(Cell::new(0));
+        let suppress_close: Rc<CloseGuard> = Rc::new(CloseGuard::default());
         let handler = EventHandler::default();
 
         let menu_btn = icon_button(Icon::Menu, &theme.icon_muted, 18, "header-btn");
@@ -482,6 +522,21 @@ impl ClipboardPopup {
             window.add_controller(key_ctrl);
         }
 
+        // ── Re-check focus when the last popover/dialog closes ───────────────
+        {
+            let win = window.clone();
+            let ko  = Rc::clone(&keep_open);
+            let ut  = Rc::clone(&undo_tick);
+            let up  = Rc::clone(&undo_pending);
+            let bar = undo_bar.clone();
+            suppress_close.set_on_release(move || {
+                if win.is_visible() && !win.is_active() && !ko.get() {
+                    tracing::debug!("[popup] focus lost while a popover was open — closing");
+                    do_close(&win, &ut, &up, &bar);
+                }
+            });
+        }
+
         // ── Focus-loss handler — drag-aware ───────────────────────────────────
         {
             let up   = Rc::clone(&undo_pending);
@@ -503,7 +558,7 @@ impl ClipboardPopup {
                 }
 
                 // A popover (menu, editor) is open, or "keep open" is on.
-                if sc.get() > 0 || ko.get() { return; }
+                if sc.is_held() || ko.get() { return; }
 
                 if dh.get() {
                     let win_c    = win.clone();
@@ -772,6 +827,18 @@ impl ClipboardPopup {
         self.search_entry.set_text("");
     }
 
+    /// Startup-notification / activation token of the launch that asked to
+    /// show the popup; lets `present()` take focus despite focus-stealing
+    /// prevention.
+    pub fn set_startup_id(&self, id: &str) {
+        self.window.set_startup_id(id);
+    }
+
+    /// A popover or dialog is open (rebuilding the list would destroy it).
+    pub fn is_busy(&self) -> bool {
+        self.suppress_close.is_held()
+    }
+
     pub fn is_visible(&self) -> bool {
         self.window.is_visible()
     }
@@ -798,10 +865,10 @@ impl ClipboardPopup {
             .logo_icon_name("edit-paste")
             .build();
         // The dialog takes focus from the popup; don't treat that as "close".
-        self.suppress_close.set(self.suppress_close.get() + 1);
+        self.suppress_close.hold();
         let sc = Rc::clone(&self.suppress_close);
         about.connect_close_request(move |_| {
-            sc.set(sc.get().saturating_sub(1));
+            sc.release();
             glib::Propagation::Proceed
         });
         about.present();
@@ -817,7 +884,7 @@ impl ClipboardPopup {
 // ── Header menu ───────────────────────────────────────────────────────────────
 
 /// The ☰ menu; also returns the label of the pause item (its text flips).
-fn build_header_menu(theme: &Theme, handler: &EventHandler, suppress: &Rc<Cell<u32>>) -> (gtk4::Popover, Label) {
+fn build_header_menu(theme: &Theme, handler: &EventHandler, suppress: &Rc<CloseGuard>) -> (gtk4::Popover, Label) {
     let popover = gtk4::Popover::new();
     popover.add_css_class("cm-menu");
     popover.set_has_arrow(false);
@@ -894,10 +961,10 @@ pub fn menu_separator() -> gtk4::Separator {
 
 /// Keep the popup open while `popover` is shown: the popover takes focus,
 /// which would otherwise look like the popup losing focus.
-pub fn track_popover(popover: &gtk4::Popover, suppress: &Rc<Cell<u32>>) {
+pub fn track_popover(popover: &gtk4::Popover, suppress: &Rc<CloseGuard>) {
     {
         let sc = Rc::clone(suppress);
-        popover.connect_show(move |_| sc.set(sc.get() + 1));
+        popover.connect_show(move |_| sc.hold());
     }
     {
         // Decrement one idle tick later so a focus-out that arrives while the
@@ -906,9 +973,17 @@ pub fn track_popover(popover: &gtk4::Popover, suppress: &Rc<Cell<u32>>) {
         let sc = Rc::clone(suppress);
         popover.connect_closed(move |_| {
             let sc = Rc::clone(&sc);
-            glib::idle_add_local_once(move || sc.set(sc.get().saturating_sub(1)));
+            glib::idle_add_local_once(move || sc.release());
         });
     }
+}
+
+/// Detach a closed popover from its row and drop its contents. The buttons
+/// inside hold the popover (to close it), so clearing the child breaks that
+/// cycle and lets the popover be freed.
+pub fn dispose_popover(p: &gtk4::Popover) {
+    p.unparent();
+    p.set_child(gtk4::Widget::NONE);
 }
 
 /// Button whose only content is an icon.
@@ -1179,6 +1254,26 @@ mod tests {
         // Second monitor to the right.
         let right = (1280, 0, 1920, 1080);
         assert_eq!(place_near_cursor((1300, 50), (464, 584), right), (1304, 54));
+    }
+
+    #[test]
+    fn close_guard_rechecks_focus_when_last_hold_is_released() {
+        let guard = CloseGuard::default();
+        let calls = Rc::new(Cell::new(0));
+        {
+            let calls = Rc::clone(&calls);
+            guard.set_on_release(move || calls.set(calls.get() + 1));
+        }
+        guard.hold();
+        guard.hold();
+        assert!(guard.is_held());
+        guard.release();
+        assert_eq!(calls.get(), 0); // still held by the other popover
+        guard.release();
+        assert!(!guard.is_held());
+        assert_eq!(calls.get(), 1);
+        guard.release(); // extra release: no underflow, no extra call
+        assert_eq!(calls.get(), 1);
     }
 
     #[test]

@@ -6,7 +6,7 @@ use crate::clipboard::entry::{ClipboardContent, ClipboardEntry};
 
 const MAGIC: &[u8; 8] = b"CLIPMGR1";
 const VERSION: u16 = 4;
-const MAX_ENTRY_BYTES: u32 = 10 * 1024 * 1024; // 10 MB guard
+const MAX_ENTRY_BYTES: u32 = crate::config::MAX_TEXT_BYTES_LIMIT as u32; // 10 MB guard
 
 pub struct PersistenceEngine {
     path: PathBuf,

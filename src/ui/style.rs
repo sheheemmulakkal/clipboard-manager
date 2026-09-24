@@ -199,11 +199,12 @@ list.history > row.pinned:selected {{
     padding: 8px 8px 8px 6px;
     min-height: {rh}px;
 }}
+/* The dot and the Alt quick-index keycap share a 22 px slot. */
 .color-dot {{
     min-width: 8px;
     min-height: 8px;
     border-radius: 4px;
-    margin: 0 6px 0 4px;
+    margin: 0 7px;
 }}
 .kind-tile {{
     background-color: {surface};
@@ -251,15 +252,18 @@ list.history > row.pinned:selected {{
 .row-btn.danger:hover {{
     background-color: alpha({danger}, 0.16);
 }}
+/* Alt held: keycap-style quick-paste numbers (like the Ctrl+K chip). */
 .quick-index {{
-    color: {bg};
-    background-color: {accent};
-    border-radius: 6px;
-    min-width: 16px;
-    font-size: 10px;
-    font-weight: 700;
+    color: {text_muted};
+    background-color: {surface_hover};
+    border: 1px solid {border};
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    min-width: 14px;          /* + 2×3 padding + 2×1 border = 22 px */
+    min-height: 16px;
+    font-size: 10.5px;
+    font-weight: 600;
     padding: 0 3px;
-    margin: 0 2px 0 0;
 }}
 .empty-label {{
     color: {text_muted};

@@ -61,6 +61,14 @@ fn main() {
         eprintln!("clipboard-manager: no XWayland — clipboard history only records while the popup is focused");
     }
 
+    // ── Already running? Just open its popup. ────────────────────────────────
+    // (Before loading history / image GC / truncating the log file, which
+    // would race with the running instance.)
+    if std::env::var_os("_CM_DAEMON").is_none() && is_running() {
+        let show = vec![args[0].clone(), "show".to_string()];
+        std::process::exit(send_to_running(&show, &cli::Command::Show));
+    }
+
     // ── Auto-daemonize (detach from terminal) ────────────────────────────────
     daemonize_if_needed();
 
@@ -88,7 +96,10 @@ fn send_to_running(args: &[String], command: &cli::Command) -> i32 {
         return 1;
     }
     if app.is_remote() {
-        let status = app.run_with_args(args).value();
+        let token = std::env::var("XDG_ACTIVATION_TOKEN")
+            .or_else(|_| std::env::var("DESKTOP_STARTUP_ID"))
+            .ok();
+        let status = app.run_with_args(&cli::with_activation_token(args, token.as_deref())).value();
         if status != 0 {
             eprintln!("clipboard-manager: the running instance could not run '{}'", args[1..].join(" "));
         }

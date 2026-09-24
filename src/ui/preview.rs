@@ -1,6 +1,6 @@
 //! Full-content preview popover (text or image).
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use gtk4::prelude::*;
@@ -9,18 +9,19 @@ use gtk4::{Button, Label, ListBoxRow, Orientation, Popover};
 use crate::clipboard::entry::{ClipboardContent, ClipboardEntry};
 use crate::events::RowAction;
 use crate::ui::format;
-use crate::ui::popup::track_popover;
+use crate::ui::popup::{dispose_popover, track_popover, CloseGuard};
 
 /// More than this is not rendered (a label with megabytes of text is slow).
 const PREVIEW_MAX_CHARS: usize = 200_000;
 
-pub fn show(row: &ListBoxRow, entry: &ClipboardEntry, suppress: &Rc<Cell<u32>>, emit: Rc<dyn Fn(RowAction)>) {
+pub fn show(row: &ListBoxRow, entry: &ClipboardEntry, suppress: &Rc<CloseGuard>, emit: Rc<dyn Fn(RowAction)>) {
     let popover = Popover::new();
     popover.add_css_class("cm-editor");
     popover.set_has_arrow(false);
     popover.set_position(gtk4::PositionType::Bottom);
     popover.set_parent(row);
     track_popover(&popover, suppress);
+    popover.add_weak_ref_notify_local(|| tracing::trace!("[popover] freed"));
 
     let vbox = gtk4::Box::new(Orientation::Vertical, 8);
     vbox.set_size_request(400, -1);
@@ -115,7 +116,7 @@ pub fn show(row: &ListBoxRow, entry: &ClipboardEntry, suppress: &Rc<Cell<u32>>, 
             let p = p.clone();
             let emit = Rc::clone(&emit);
             glib::idle_add_local_once(move || {
-                p.unparent();
+                dispose_popover(&p);
                 if let Some(a) = action {
                     emit(a);
                 }
@@ -135,10 +136,12 @@ pub fn show(row: &ListBoxRow, entry: &ClipboardEntry, suppress: &Rc<Cell<u32>>, 
         // otherwise the focused button would treat Space as a click.
         let keys = gtk4::EventControllerKey::new();
         keys.set_propagation_phase(gtk4::PropagationPhase::Capture);
-        let p = popover.clone();
+        let p = popover.downgrade();
         keys.connect_key_pressed(move |_, key, _, _| {
             if key == gdk4::Key::space {
-                p.popdown();
+                if let Some(p) = p.upgrade() {
+                    p.popdown();
+                }
                 return glib::Propagation::Stop;
             }
             glib::Propagation::Proceed

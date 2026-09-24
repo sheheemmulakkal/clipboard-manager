@@ -77,13 +77,24 @@ impl Store for MemoryStore {
         if !is_text {
             return;
         }
+        // An entry that already has this text is merged into the edited one:
+        // its pin, label, colour and tag survive.
+        let mut merged: Option<ClipboardEntry> = None;
         if self.deduplicate {
-            self.entries.retain(|e| {
-                e.id == id || !matches!(&e.content, ClipboardContent::Text(t) if *t == text)
-            });
+            if let Some(pos) = self.entries.iter().position(|e| {
+                e.id != id && matches!(&e.content, ClipboardContent::Text(t) if *t == text)
+            }) {
+                merged = self.entries.remove(pos);
+            }
         }
         if let Some(e) = self.entries.iter_mut().find(|e| e.id == id) {
             e.content = ClipboardContent::Text(text);
+            if let Some(other) = merged {
+                e.pinned |= other.pinned;
+                e.label = e.label.take().or(other.label);
+                e.color = e.color.take().or(other.color);
+                e.tag = e.tag.take().or(other.tag);
+            }
         }
     }
 
@@ -346,6 +357,23 @@ mod tests {
         s.set_text(1, "b".into());
         let ids: Vec<u64> = s.get_all().iter().map(|e| e.id).collect();
         assert_eq!(ids, vec![1]);
+    }
+
+    #[test]
+    fn set_text_merge_keeps_pin_and_metadata_of_removed_duplicate() {
+        let mut s = MemoryStore::new(10, true);
+        s.add(make_text(1, "a"));
+        let mut b = make_text(2, "b");
+        b.pinned = true;
+        b.label = Some("Keep me".into());
+        b.tag = Some("Work".into());
+        s.add(b);
+        s.set_text(1, "b".into());
+        let all = s.get_all();
+        assert_eq!(all.len(), 1);
+        assert!(all[0].pinned);
+        assert_eq!(all[0].label.as_deref(), Some("Keep me"));
+        assert_eq!(all[0].tag.as_deref(), Some("Work"));
     }
 
     #[test]

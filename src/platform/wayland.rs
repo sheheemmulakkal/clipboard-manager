@@ -59,7 +59,7 @@ impl Platform for WaylandPlatform {
     /// The UI runs on XWayland (see main.rs), where the X11 TARGETS query
     /// sees the compositor's mirrored clipboard, including the password hint.
     fn clipboard_targets(&self) -> Option<Vec<String>> {
-        if std::env::var("GDK_BACKEND").as_deref() == Ok("x11") {
+        if on_xwayland() {
             super::x11::clipboard_targets_x11().ok()
         } else {
             None
@@ -72,9 +72,15 @@ impl Platform for WaylandPlatform {
 
     fn move_popup(&self, _window: &gtk4::Window, _x: i32, _y: i32) {}
 
-    fn button1_held(&self) -> bool { false }
+    // Under XWayland (the default, see main.rs) the X11 pointer query works
+    // for our own window, which is all the drag detection needs.
+    fn button1_held(&self) -> bool {
+        on_xwayland() && super::x11::X11Platform.button1_held()
+    }
 
-    fn can_query_button1(&self) -> bool { false }
+    fn can_query_button1(&self) -> bool {
+        on_xwayland()
+    }
 }
 
 // ── RemoteDesktop paste daemon ────────────────────────────────────────────────
@@ -217,6 +223,11 @@ async fn send_ctrl_shift_v<'a>(
     let _ = proxy.notify_keyboard_keysym(session, 0x0076, KeyState::Released).await;
     let _ = proxy.notify_keyboard_keysym(session, 0xffe1, KeyState::Released).await;
     let _ = proxy.notify_keyboard_keysym(session, 0xffe3, KeyState::Released).await;
+}
+
+/// Whether the UI runs on XWayland (GDK's X11 backend on a Wayland session).
+fn on_xwayland() -> bool {
+    std::env::var("GDK_BACKEND").as_deref() == Ok("x11")
 }
 
 /// Read a saved RemoteDesktop restore token.

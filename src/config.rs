@@ -12,6 +12,10 @@ fn default_deduplicate() -> bool { true }
 fn default_popup_follow_cursor() -> bool { true }
 fn default_clear_undo_timeout_secs() -> u64 { 5 }
 fn default_max_text_bytes() -> usize { 1024 * 1024 }
+
+/// Largest text the history file stores; `max_text_bytes` is capped to it
+/// (anything bigger would be dropped when the history is loaded again).
+pub const MAX_TEXT_BYTES_LIMIT: usize = 10 * 1024 * 1024;
 fn default_tray_icon() -> bool { true }
 fn default_expire_after_days() -> u64 { 0 }
 fn default_ignore_apps() -> Vec<String> {
@@ -192,7 +196,16 @@ impl AppConfig {
     }
 
     pub fn from_toml(text: &str) -> Result<Self> {
-        Ok(toml::from_str(text)?)
+        let mut config: AppConfig = toml::from_str(text)?;
+        if config.max_text_bytes > MAX_TEXT_BYTES_LIMIT {
+            tracing::warn!(
+                "[config] max_text_bytes {} is above the {} byte limit — using the limit",
+                config.max_text_bytes,
+                MAX_TEXT_BYTES_LIMIT
+            );
+            config.max_text_bytes = MAX_TEXT_BYTES_LIMIT;
+        }
+        Ok(config)
     }
 
     /// Load the user's config. Never fails: on a read or parse error the
@@ -242,6 +255,14 @@ mod tests {
         assert_eq!(file.ignore_apps, d.ignore_apps);
         assert_eq!(file.tray_icon, d.tray_icon);
         assert_eq!(file.clear_undo_timeout_secs, d.clear_undo_timeout_secs);
+    }
+
+    #[test]
+    fn max_text_bytes_is_capped_at_what_history_can_store() {
+        let c = AppConfig::from_toml("max_text_bytes = 50000000").unwrap();
+        assert_eq!(c.max_text_bytes, MAX_TEXT_BYTES_LIMIT);
+        let c = AppConfig::from_toml("max_text_bytes = 2000").unwrap();
+        assert_eq!(c.max_text_bytes, 2000);
     }
 
     #[test]

@@ -4,7 +4,6 @@
 //! `● colour dot · kind icon tile | image thumbnail · title / preview ·
 //!  tag pill · time (swapped for action buttons on hover) · pin`
 
-use std::cell::Cell;
 use std::rc::Rc;
 
 use gtk4::prelude::*;
@@ -16,6 +15,7 @@ use crate::events::RowAction;
 use crate::ui::context_menu;
 use crate::ui::editor;
 use crate::ui::format;
+use crate::ui::popup::CloseGuard;
 use crate::ui::preview;
 use crate::ui::icons::{self, Icon};
 use crate::ui::theme::{normalize_color, tag_color, Theme};
@@ -28,7 +28,7 @@ const TOOLTIP_MAX_LINES: usize = 12;
 pub struct RowContext {
     pub theme:           Rc<Theme>,
     pub show_timestamps: bool,
-    pub suppress_close:  Rc<Cell<u32>>,
+    pub suppress_close:  Rc<CloseGuard>,
     /// Unix time used for "5 min ago".
     pub now:             u64,
     /// Monitor sizes in device pixels; an image of exactly that size is
@@ -239,12 +239,18 @@ pub fn build_item_row(
     connect(&del_btn, &on_action, RowAction::Remove);
     connect(&pin_btn, &on_action, RowAction::TogglePin);
 
+    // These closures end up in handlers owned by the row itself: hold the
+    // row weakly so removed rows can be freed.
     let open_preview: Rc<dyn Fn()> = {
-        let row      = row.clone();
+        let row      = row.downgrade();
         let entry    = entry.clone();
         let suppress = Rc::clone(&ctx.suppress_close);
         let cb       = Rc::clone(&on_action);
-        Rc::new(move || preview::show(&row, &entry, &suppress, Rc::clone(&cb)))
+        Rc::new(move || {
+            if let Some(row) = row.upgrade() {
+                preview::show(&row, &entry, &suppress, Rc::clone(&cb));
+            }
+        })
     };
     {
         let open = Rc::clone(&open_preview);
@@ -252,16 +258,20 @@ pub fn build_item_row(
     }
 
     let open_editor: Rc<dyn Fn()> = {
-        let row      = row.clone();
+        let row      = row.downgrade();
         let entry    = entry.clone();
         let suppress = Rc::clone(&ctx.suppress_close);
         let cb       = Rc::clone(&on_action);
-        Rc::new(move || editor::show(&row, &entry, &suppress, Rc::clone(&cb)))
+        Rc::new(move || {
+            if let Some(row) = row.upgrade() {
+                editor::show(&row, &entry, &suppress, Rc::clone(&cb));
+            }
+        })
     };
 
     // Context menu: right-click at the pointer, or keyboard at the row.
     let open_menu_at: Rc<OpenMenuAt> = {
-        let row   = row.clone();
+        let row   = row.downgrade();
         let entry = entry.clone();
         let env   = context_menu::MenuEnv {
             theme:    Rc::clone(&ctx.theme),
@@ -274,7 +284,9 @@ pub fn build_item_row(
             preview: Rc::clone(&open_preview),
         };
         Rc::new(move |point| {
-            context_menu::show(&row, point, &entry, &env, Rc::clone(&cb), ui.clone());
+            if let Some(row) = row.upgrade() {
+                context_menu::show(&row, point, &entry, &env, Rc::clone(&cb), ui.clone());
+            }
         })
     };
     {
@@ -289,6 +301,7 @@ pub fn build_item_row(
     }
     let open_menu: Rc<dyn Fn()> = Rc::new(move || open_menu_at(None));
 
+    row.add_weak_ref_notify_local(|| tracing::trace!("[row] freed"));
     ItemRow { row, hooks: RowHooks { open_menu, open_editor, show_quick_index, open_preview } }
 }
 

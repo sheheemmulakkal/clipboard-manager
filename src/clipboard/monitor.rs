@@ -1,4 +1,5 @@
 use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -29,7 +30,20 @@ struct State {
     ignore_apps:     Vec<String>,
     platform:        Arc<dyn Platform>,
     paused:          Rc<Cell<bool>>,
+    /// SHA-256 of texts skipped as secrets or ignored-app copies this
+    /// session, so they are refused if they reappear later (e.g. when a
+    /// clipboard-persistence daemon republishes them without the hint).
+    refused:         RefCell<HashSet<[u8; 32]>>,
+    started:         std::time::Instant,
     on_change:       Box<dyn Fn()>,
+}
+
+/// Changes reported this soon after start describe the pre-existing clipboard.
+const STARTUP_QUIET: std::time::Duration = std::time::Duration::from_millis(1500);
+
+fn digest(bytes: &[u8]) -> [u8; 32] {
+    use sha2::Digest;
+    sha2::Sha256::digest(bytes).into()
 }
 
 /// Clipboard owners such as KeePassXC and KWallet add this MIME type to
@@ -53,9 +67,14 @@ enum TextDecision {
     TooLarge,
 }
 
-/// Decide what to do with clipboard text, given the last text we saw.
-fn text_decision(text: &str, last: &str, max_bytes: usize) -> TextDecision {
-    if text.is_empty() || text == last {
+/// Decide what to do with clipboard text.
+///
+/// * `last` — the last text this monitor saw (the same change can be
+///   delivered twice); only a duplicate while the store still has it.
+/// * `in_store` — the history already contains this text.
+/// * `refused` — this text was skipped earlier as a secret / ignored-app copy.
+fn text_decision(text: &str, last: &str, max_bytes: usize, in_store: bool, refused: bool) -> TextDecision {
+    if text.is_empty() || refused || (text == last && in_store) {
         TextDecision::Ignore
     } else if text.len() > max_bytes {
         TextDecision::TooLarge
@@ -81,6 +100,8 @@ impl ClipboardMonitor {
             ignore_apps:     config.ignore_apps.clone(),
             platform,
             paused,
+            refused:         RefCell::new(HashSet::new()),
+            started:         std::time::Instant::now(),
             on_change:       Box::new(on_change),
         });
 
@@ -89,18 +110,23 @@ impl ClipboardMonitor {
             .expect("no GDK display")
             .clipboard();
 
-        {
-            let state = Rc::clone(&state);
-            clipboard.connect_changed(move |cb| on_clipboard_changed(cb, &state));
-        }
-        // Pick up whatever is on the clipboard at startup.
-        on_clipboard_changed(&clipboard, &state);
+        // Only changes from now on are recorded: whatever is on the clipboard
+        // at startup may come from an app we would have ignored (and was
+        // most likely recorded by the previous run already).
+        let state_c = Rc::clone(&state);
+        clipboard.connect_changed(move |cb| on_clipboard_changed(cb, &state_c));
 
         Self
     }
 }
 
 fn on_clipboard_changed(clipboard: &gdk4::Clipboard, state: &Rc<State>) {
+    // GDK announces the clipboard owner found at startup as a change. That
+    // content predates this run (and may come from an app we'd ignore).
+    if state.started.elapsed() < STARTUP_QUIET {
+        tracing::debug!("[monitor] startup clipboard content — not recorded");
+        return;
+    }
     // Our own set_text / set_texture (the user picked an item in the popup).
     // The controller records that itself. Forget the last-seen content so
     // copying it again from another app still moves it to the top.
@@ -122,12 +148,14 @@ fn on_clipboard_changed(clipboard: &gdk4::Clipboard, state: &Rc<State>) {
     let raw_refs: Vec<&str> = raw_targets.iter().map(String::as_str).collect();
     if is_secret_offer(&mime_refs) || is_secret_offer(&raw_refs) {
         tracing::debug!("[monitor] password-manager content — not recorded");
+        refuse_current_text(clipboard, state);
         return;
     }
     if !state.ignore_apps.is_empty() {
         if let Some(classes) = state.platform.active_window_class() {
             if is_ignored_app(&classes, &state.ignore_apps) {
                 tracing::debug!("[monitor] copied in ignored app {classes:?} — not recorded");
+                refuse_current_text(clipboard, state);
                 return;
             }
         }
@@ -161,8 +189,25 @@ fn on_clipboard_changed(clipboard: &gdk4::Clipboard, state: &Rc<State>) {
     }
 }
 
+/// Remember the current clipboard text as refused (never to be recorded).
+fn refuse_current_text(clipboard: &gdk4::Clipboard, state: &Rc<State>) {
+    let state = Rc::clone(state);
+    clipboard.read_text_async(
+        None::<&gdk4::gio::Cancellable>,
+        move |result: Result<Option<glib::GString>, glib::Error>| {
+            if let Ok(Some(text)) = result {
+                state.refused.borrow_mut().insert(digest(text.as_bytes()));
+            }
+        },
+    );
+}
+
 fn capture_text(state: &State, text: String) {
-    let decision = text_decision(&text, &state.last_text.borrow(), state.max_text_bytes);
+    let in_store = state.store.borrow().get_all().iter().any(|e| {
+        matches!(&e.content, crate::clipboard::entry::ClipboardContent::Text(t) if *t == text)
+    });
+    let refused = state.refused.borrow().contains(&digest(text.as_bytes()));
+    let decision = text_decision(&text, &state.last_text.borrow(), state.max_text_bytes, in_store, refused);
     match decision {
         TextDecision::Ignore => {}
         TextDecision::TooLarge => {
@@ -219,8 +264,9 @@ fn capture_image(state: &State, texture: &gdk4::Texture) {
         arr
     };
 
-    // Same change delivered twice → nothing to do.
-    if *state.last_image_hash.borrow() == Some(hash) {
+    // Same change delivered twice → nothing to do (unless the image was
+    // deleted from the history meanwhile: then it is recorded again).
+    if *state.last_image_hash.borrow() == Some(hash) && state.store.borrow().contains_image_hash(&hash) {
         let _ = std::fs::remove_file(&tmp_path);
         return;
     }
@@ -286,10 +332,25 @@ mod tests {
 
     #[test]
     fn text_capture_rules() {
-        assert_eq!(text_decision("", "", 10), TextDecision::Ignore);
-        assert_eq!(text_decision("same", "same", 10), TextDecision::Ignore);
-        assert_eq!(text_decision("new", "old", 10), TextDecision::Capture);
-        assert_eq!(text_decision("12345678901", "old", 10), TextDecision::TooLarge);
-        assert_eq!(text_decision("1234567890", "old", 10), TextDecision::Capture);
+        let d = |text, last, stored, refused| text_decision(text, last, 10, stored, refused);
+        assert_eq!(d("", "", false, false), TextDecision::Ignore);
+        assert_eq!(d("same", "same", true, false), TextDecision::Ignore);
+        assert_eq!(d("new", "old", false, false), TextDecision::Capture);
+        assert_eq!(d("12345678901", "old", false, false), TextDecision::TooLarge);
+        assert_eq!(d("1234567890", "old", false, false), TextDecision::Capture);
+    }
+
+    #[test]
+    fn recopy_after_delete_is_captured() {
+        // "X" was captured, then deleted from the history; copying it again
+        // must record it even though it is still the last text seen.
+        assert_eq!(text_decision("X", "X", 10, false, false), TextDecision::Capture);
+    }
+
+    #[test]
+    fn refused_secret_is_never_captured() {
+        // Content skipped earlier (password hint / ignored app) that shows up
+        // again later, e.g. republished by a clipboard-persistence daemon.
+        assert_eq!(text_decision("hunter2", "", 10, false, true), TextDecision::Ignore);
     }
 }

@@ -1,6 +1,6 @@
 //! "Edit" popover: title (label) and, for text entries, the content.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use gtk4::prelude::*;
@@ -8,7 +8,7 @@ use gtk4::{Button, Entry, Label, ListBoxRow, Orientation, Popover, TextView};
 
 use crate::clipboard::entry::{ClipboardContent, ClipboardEntry, EntryMeta};
 use crate::events::RowAction;
-use crate::ui::popup::track_popover;
+use crate::ui::popup::{dispose_popover, track_popover, CloseGuard};
 
 /// The row actions an edit results in (empty if nothing changed).
 pub fn edits(entry: &ClipboardEntry, title: &str, text: Option<&str>) -> Vec<RowAction> {
@@ -31,13 +31,14 @@ pub fn edits(entry: &ClipboardEntry, title: &str, text: Option<&str>) -> Vec<Row
 }
 
 /// Open the editor for `entry`, anchored to `row`.
-pub fn show(row: &ListBoxRow, entry: &ClipboardEntry, suppress: &Rc<Cell<u32>>, emit: Rc<dyn Fn(RowAction)>) {
+pub fn show(row: &ListBoxRow, entry: &ClipboardEntry, suppress: &Rc<CloseGuard>, emit: Rc<dyn Fn(RowAction)>) {
     let popover = Popover::new();
     popover.add_css_class("cm-editor");
     popover.set_has_arrow(false);
     popover.set_position(gtk4::PositionType::Bottom);
     popover.set_parent(row);
     track_popover(&popover, suppress);
+    popover.add_weak_ref_notify_local(|| tracing::trace!("[popover] freed"));
 
     let vbox = gtk4::Box::new(Orientation::Vertical, 6);
     vbox.set_size_request(360, -1);
@@ -106,7 +107,7 @@ pub fn show(row: &ListBoxRow, entry: &ClipboardEntry, suppress: &Rc<Cell<u32>>, 
             let p = p.clone();
             let emit = Rc::clone(&emit);
             glib::idle_add_local_once(move || {
-                p.unparent();
+                dispose_popover(&p);
                 for a in actions {
                     emit(a);
                 }
@@ -119,14 +120,17 @@ pub fn show(row: &ListBoxRow, entry: &ClipboardEntry, suppress: &Rc<Cell<u32>>, 
         let title = title.clone();
         let view = content_view.clone();
         let pending = Rc::clone(&pending);
-        let popover = popover.clone();
+        // Weak: this closure is also held by a key controller on the popover.
+        let popover = popover.downgrade();
         Rc::new(move || {
             let text = view.as_ref().map(|v| {
                 let b = v.buffer();
                 b.text(&b.start_iter(), &b.end_iter(), false).to_string()
             });
             *pending.borrow_mut() = edits(&entry, &title.text(), text.as_deref());
-            popover.popdown();
+            if let Some(p) = popover.upgrade() {
+                p.popdown();
+            }
         })
     };
 

@@ -79,6 +79,37 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
     }
 }
 
+const TOKEN_ARG: &str = "--activation-token=";
+
+/// Insert the launcher's startup-notification / XDG activation token (from
+/// the environment of the forwarding process) as a hidden first argument.
+/// The running instance passes it to GTK so the window manager lets the
+/// popup take focus.
+pub fn with_activation_token(args: &[String], token: Option<&str>) -> Vec<String> {
+    let mut out = args.to_vec();
+    if let Some(t) = token.filter(|t| !t.is_empty()) {
+        out.insert(1.min(out.len()), format!("{TOKEN_ARG}{t}"));
+    }
+    out
+}
+
+/// Remove the hidden token argument; returns the remaining args and the token.
+pub fn split_activation_token(args: &[String]) -> (Vec<String>, Option<String>) {
+    let mut token = None;
+    let rest = args
+        .iter()
+        .filter(|a| match a.strip_prefix(TOKEN_ARG) {
+            Some(t) => {
+                token = Some(t.to_string());
+                false
+            }
+            None => true,
+        })
+        .cloned()
+        .collect();
+    (rest, token)
+}
+
 /// `list` output: one line per entry, newest first (`entries` already sorted).
 pub fn format_list(entries: &[ClipboardEntry], limit: usize) -> String {
     if entries.is_empty() {
@@ -126,6 +157,18 @@ mod tests {
         assert_eq!(parse(&args(&["reload"])), Ok(Command::Reload));
         assert_eq!(parse(&args(&["--help"])), Ok(Command::Help));
         assert_eq!(parse(&args(&["-V"])), Ok(Command::Version));
+    }
+
+    #[test]
+    fn activation_token_is_split_off() {
+        let (rest, token) = split_activation_token(&args(&["--activation-token=abc_123", "toggle"]));
+        assert_eq!(rest, args(&["toggle"]));
+        assert_eq!(token.as_deref(), Some("abc_123"));
+        let (rest, token) = split_activation_token(&args(&["show"]));
+        assert_eq!(rest, args(&["show"]));
+        assert_eq!(token, None);
+        assert_eq!(with_activation_token(&args(&["toggle"]), Some("t1")), args(&["--activation-token=t1", "toggle"]));
+        assert_eq!(with_activation_token(&args(&["toggle"]), None), args(&["toggle"]));
     }
 
     #[test]
