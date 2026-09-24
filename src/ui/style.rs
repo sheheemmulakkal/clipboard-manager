@@ -349,6 +349,22 @@ row:selected .row-actions {{
     font-size: 9px;
     color: alpha(@theme_fg_color, 0.6);
 }}
+
+/* ── Scroll-to-top button ─────────────────────────────────────────────── */
+.scroll-top-btn {{
+    min-width: 34px;
+    min-height: 34px;
+    padding: 0;
+    border-radius: 17px;
+    background-color: {accent};
+    color: white;
+    font-weight: bold;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+    border: none;
+}}
+.scroll-top-btn:hover {{
+    background-color: shade({accent}, 1.1);
+}}
 "#
     )
 }

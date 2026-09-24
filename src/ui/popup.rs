@@ -144,7 +144,38 @@ impl ClipboardPopup {
         let list_box = ListBox::new();
         list_box.set_selection_mode(SelectionMode::Single);
         scrolled.set_child(Some(&list_box));
-        vbox.append(&scrolled);
+
+        // ── Scroll-to-top button (floats over the list) ───────────────────────
+        let list_overlay = gtk4::Overlay::new();
+        list_overlay.set_child(Some(&scrolled));
+        let scroll_top_btn = Button::with_label("\u{2191}");
+        scroll_top_btn.add_css_class("scroll-top-btn");
+        scroll_top_btn.set_tooltip_text(Some("Scroll to top (Home)"));
+        scroll_top_btn.set_halign(gtk4::Align::End);
+        scroll_top_btn.set_valign(gtk4::Align::End);
+        scroll_top_btn.set_margin_end(14);
+        scroll_top_btn.set_margin_bottom(14);
+        scroll_top_btn.set_visible(false);
+        list_overlay.add_overlay(&scroll_top_btn);
+        vbox.append(&list_overlay);
+
+        {
+            let btn = scroll_top_btn.clone();
+            let row_height = sizes.row_height;
+            scrolled.vadjustment().connect_value_changed(move |adj| {
+                btn.set_visible(scroll_top_visible(adj.value(), row_height));
+            });
+        }
+        {
+            let sw = scrolled.clone();
+            let lb = list_box.clone();
+            scroll_top_btn.connect_clicked(move |_| {
+                animate_scroll_to(&sw, 0.0);
+                if let Some(first) = lb.row_at_index(0) {
+                    lb.select_row(Some(&first));
+                }
+            });
+        }
 
         // ── Undo bar ──────────────────────────────────────────────────────────
         let undo_bar   = gtk4::Box::new(Orientation::Horizontal, 8);
@@ -261,6 +292,18 @@ impl ClipboardPopup {
                         }
                         Propagation::Stop
                     }
+                    k if (k == gdk4::Key::Home || k == gdk4::Key::End) && !has_focus_within(&se) => {
+                        let target = if k == gdk4::Key::Home {
+                            lb.row_at_index(0)
+                        } else {
+                            last_row(&lb)
+                        };
+                        if let Some(row) = target {
+                            lb.select_row(Some(&row));
+                            row.grab_focus();
+                        }
+                        Propagation::Stop
+                    }
                     k if k == gdk4::Key::Down => {
                         // When search entry has focus, Down always jumps to the
                         // first list item (row 0) rather than advancing from the
@@ -370,6 +413,7 @@ impl ClipboardPopup {
 
                     *poll_outer.borrow_mut() = Some(id);
                 } else {
+                    tracing::debug!("[popup] focus lost — closing");
                     do_close(win, &ut, &up, &bar);
                 }
             });
@@ -432,7 +476,9 @@ impl ClipboardPopup {
             // a delete, pin toggle, or label change.
             self.scrolled.vadjustment().set_value(saved_scroll);
         } else {
-            // Fresh open: select row 0 so keyboard navigation works immediately.
+            // Fresh open: start at the top with row 0 selected so keyboard
+            // navigation works immediately.
+            self.scrolled.vadjustment().set_value(0.0);
             if let Some(first) = self.list_box.row_at_index(0) {
                 self.list_box.select_row(Some(&first));
             }
@@ -544,6 +590,41 @@ fn do_close(
     if let Some(s) = state { (s.on_commit)(); }
 }
 
+/// The scroll-to-top button shows once the list is scrolled past one row.
+fn scroll_top_visible(value: f64, row_height: u32) -> bool {
+    value > row_height as f64
+}
+
+fn ease_out_cubic(t: f64) -> f64 {
+    let t = t.clamp(0.0, 1.0);
+    1.0 - (1.0 - t).powi(3)
+}
+
+/// Smoothly scroll `sw` to `target` over 200 ms.
+fn animate_scroll_to(sw: &ScrolledWindow, target: f64) {
+    const DURATION_US: f64 = 200_000.0;
+    let adj   = sw.vadjustment();
+    let start = adj.value();
+    let t0: Cell<Option<i64>> = Cell::new(None);
+    sw.add_tick_callback(move |_, clock| {
+        let now = clock.frame_time();
+        let t0 = match t0.get() {
+            Some(t) => t,
+            None => {
+                t0.set(Some(now));
+                now
+            }
+        };
+        let p = (now - t0) as f64 / DURATION_US;
+        adj.set_value(start + (target - start) * ease_out_cubic(p));
+        if p >= 1.0 { glib::ControlFlow::Break } else { glib::ControlFlow::Continue }
+    });
+}
+
+fn last_row(lb: &ListBox) -> Option<gtk4::ListBoxRow> {
+    lb.last_child().and_then(|w| w.downcast::<gtk4::ListBoxRow>().ok())
+}
+
 /// True when keyboard focus is on `widget` or one of its descendants.
 /// (A SearchEntry never has focus itself — its inner text widget does.)
 fn has_focus_within(widget: &impl IsA<gtk4::Widget>) -> bool {
@@ -570,4 +651,24 @@ fn move_window_near_cursor(win: &Window, platform: &dyn Platform, cx: i32, cy: i
     if x < 0 { x = 4; }
     if y < 0 { y = 4; }
     platform.move_popup(win, x, y);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ease_out_cubic_endpoints_and_shape() {
+        assert_eq!(ease_out_cubic(0.0), 0.0);
+        assert_eq!(ease_out_cubic(1.0), 1.0);
+        assert!(ease_out_cubic(0.5) > 0.5); // fast start, slow end
+        assert_eq!(ease_out_cubic(2.0), 1.0); // clamped
+    }
+
+    #[test]
+    fn scroll_top_button_appears_after_one_row() {
+        assert!(!scroll_top_visible(0.0, 44));
+        assert!(!scroll_top_visible(44.0, 44));
+        assert!(scroll_top_visible(45.0, 44));
+    }
 }
