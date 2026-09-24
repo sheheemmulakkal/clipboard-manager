@@ -2,6 +2,7 @@ mod app;
 mod clipboard;
 mod config;
 mod hotkey;
+mod notify;
 mod paths;
 mod platform;
 mod store;
@@ -67,13 +68,7 @@ fn reload_daemon() {
         std::process::exit(1);
     };
 
-    match std::process::Command::new(&exe)
-        .env("_CM_DAEMON", "1")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-    {
+    match spawn_daemon(&exe) {
         Ok(_)  => println!("clipboard-manager: reloaded"),
         Err(e) => {
             eprintln!("clipboard-manager: reload failed: {e}");
@@ -82,8 +77,8 @@ fn reload_daemon() {
     }
 }
 
-/// Re-exec the process with I/O redirected to `/dev/null` so it is fully
-/// detached from the terminal.  The parent exits immediately; the child is
+/// Re-exec the process detached from the terminal (stdin/stdout to
+/// `/dev/null`, stderr to the log file).  The parent exits immediately; the child is
 /// adopted by init and runs as a background daemon.
 ///
 /// Skipped when:
@@ -96,15 +91,30 @@ fn daemonize_if_needed() {
 
     let Ok(exe) = std::env::current_exe() else { return };
 
-    if std::process::Command::new(&exe)
-        .env("_CM_DAEMON", "1")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .is_ok()
-    {
+    if spawn_daemon(&exe).is_ok() {
         std::process::exit(0);
     }
     // Spawn failed → fall through and run in foreground as a graceful fallback.
+}
+
+/// Start the detached daemon child. Its stderr (where the log goes) is
+/// written to `$XDG_STATE_HOME/clipboard-manager/clipboard-manager.log`,
+/// truncated on every start, so problems are diagnosable after the fact.
+fn spawn_daemon(exe: &std::path::Path) -> std::io::Result<std::process::Child> {
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::process::Stdio;
+    let stderr = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(paths::state_dir().join("clipboard-manager.log"))
+        .map(Stdio::from)
+        .unwrap_or_else(|_| Stdio::null());
+    std::process::Command::new(exe)
+        .env("_CM_DAEMON", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(stderr)
+        .spawn()
 }

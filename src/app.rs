@@ -24,11 +24,12 @@ pub struct App {
     store:          Rc<RefCell<Box<dyn Store>>>,
     prev_window_id: Rc<Cell<Option<u64>>>,
     image_dir:      std::path::PathBuf,
+    config_error:   Option<String>,
 }
 
 impl App {
     pub fn new() -> Result<Self> {
-        let config = AppConfig::load()?;
+        let (config, config_error) = AppConfig::load();
 
         if let Err(e) = Self::autostart_if_needed() {
             tracing::warn!("[autostart] {e}");
@@ -52,7 +53,7 @@ impl App {
         // Startup GC: delete image files not referenced by any current store entry.
         gc_image_files(&image_dir, &store.borrow());
 
-        Ok(Self { config, store, prev_window_id: Rc::new(Cell::new(None)), image_dir })
+        Ok(Self { config, store, prev_window_id: Rc::new(Cell::new(None)), image_dir, config_error })
     }
 
     fn autostart_if_needed() -> Result<()> {
@@ -77,6 +78,8 @@ impl App {
 
     pub fn run(&self) -> Result<()> {
         tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
+            .with_ansi(std::env::var_os("_CM_DAEMON").is_none())
             .with_env_filter(
                 tracing_subscriber::EnvFilter::try_from_default_env()
                     .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
@@ -96,6 +99,7 @@ impl App {
         let sizes                   = self.config.sizes.clone();
         let prev_window_id          = Rc::clone(&self.prev_window_id);
         let image_dir               = self.image_dir.clone();
+        let config_error            = self.config_error.clone();
 
         // ── Single-instance re-activation ─────────────────────────────────────
         // GTK enforces a single instance via D-Bus (application_id).
@@ -119,6 +123,10 @@ impl App {
             }
 
             std::mem::forget(app.hold());
+
+            if let Some(msg) = &config_error {
+                crate::notify::error("Clipboard Manager: config error", &format!("{msg}\nUsing default settings."));
+            }
 
             // ── Platform detection (Strategy pattern) ─────────────────────
             // Returns Arc<dyn Platform> — X11Platform or WaylandPlatform
@@ -182,18 +190,14 @@ impl App {
                     "Hotkey registered: {} — press it to open clipboard history",
                     hotkey_str
                 ),
-                Err(e) => {
-                    eprintln!("ERROR: Invalid hotkey '{}' in config.toml", hotkey_str);
-                    eprintln!("  Reason: {e}");
-                    eprintln!("  Valid example: hotkey = \"ctrl+alt+v\"");
-                    eprintln!("  See ~/.config/clipboard-manager/config.toml");
-                    std::process::exit(1);
-                }
+                Err(e) => crate::notify::error(
+                    "Clipboard Manager: hotkey not registered",
+                    &format!("'{hotkey_str}': {e:#}\nExample: hotkey = \"ctrl+alt+v\" in config.toml"),
+                ),
             }
 
             let popup_for_timer = Rc::clone(&popup);
             let store_for_timer = Rc::clone(&store);
-            let image_dir_timer = image_dir.clone();
 
             // ── 50 ms poll loop ───────────────────────────────────────────
             glib::timeout_add_local(std::time::Duration::from_millis(50), move || {
@@ -221,7 +225,6 @@ impl App {
                     let popup_r   = Rc::clone(&popup_for_timer);
                     let cell_r    = Rc::clone(&prev_window_id);
                     let repop_r   = Rc::clone(&repopulate);
-                    let image_dir_r = image_dir_timer.clone();
 
                     // Clone platform for use inside the repopulate closure.
                     let platform_inner = Arc::clone(&platform);
@@ -235,8 +238,6 @@ impl App {
                         let store_sel    = Rc::clone(&store_r);
                         let popup_sel    = Rc::clone(&popup_r);
                         let cell_sel     = Rc::clone(&cell_r);
-                        let image_dir_sel = image_dir_r.clone();
-                        let image_dir_cpy = image_dir_r.clone();
 
                         let store_rm   = Rc::clone(&store_r);
                         let repop_rm   = Rc::clone(&repop_r);
@@ -263,7 +264,7 @@ impl App {
                             &entries,
                             // ── on_select: copy + hide + paste ────────────
                             move |_id, content| {
-                                set_clipboard_content(&content, &image_dir_sel);
+                                set_clipboard_content(&content);
                                 popup_sel.hide();
 
                                 let prev_id    = cell_sel.get();
@@ -287,7 +288,7 @@ impl App {
                             },
                             // ── on_copy: copy to clipboard only (no paste) ─
                             move |_id, content| {
-                                set_clipboard_content(&content, &image_dir_cpy);
+                                set_clipboard_content(&content);
                                 tracing::debug!("[copy] copied to clipboard (no paste)");
                             },
                             // ── on_terminal_paste: copy + hide + Ctrl+Shift+V
@@ -432,7 +433,7 @@ fn filter_entries(entries: Vec<ClipboardEntry>, query: &str) -> Vec<ClipboardEnt
 }
 
 /// Set clipboard content: text or image (loaded from disk).
-fn set_clipboard_content(content: &ClipboardContent, image_dir: &std::path::Path) {
+fn set_clipboard_content(content: &ClipboardContent) {
     let display = match gdk4::Display::default() {
         Some(d) => d,
         None => return,
@@ -443,7 +444,7 @@ fn set_clipboard_content(content: &ClipboardContent, image_dir: &std::path::Path
         }
         ClipboardContent::Image { hash, .. } => {
             let hex = paths::hex(hash);
-            let full_path = image_dir.join(format!("{hex}.png"));
+            let full_path = paths::image_path(hash);
             let gio_file = gdk4::gio::File::for_path(&full_path);
             match gdk4::Texture::from_file(&gio_file) {
                 Ok(texture) => display.clipboard().set_texture(&texture),

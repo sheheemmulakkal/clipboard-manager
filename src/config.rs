@@ -139,12 +139,25 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
-    pub fn load() -> Result<Self> {
+    pub fn from_toml(text: &str) -> Result<Self> {
+        Ok(toml::from_str(text)?)
+    }
+
+    /// Load the user's config. Never fails: on a read or parse error the
+    /// defaults are used and the error text is returned for display.
+    pub fn load() -> (Self, Option<String>) {
         let path = crate::paths::config_file();
         if path.exists() {
-            let text = std::fs::read_to_string(&path)?;
-            let config: AppConfig = toml::from_str(&text)?;
-            Ok(config)
+            let parsed = std::fs::read_to_string(&path)
+                .map_err(anyhow::Error::from)
+                .and_then(|text| Self::from_toml(&text));
+            match parsed {
+                Ok(config) => (config, None),
+                Err(e) => (
+                    AppConfig::default(),
+                    Some(format!("{}: {e:#}", path.display())),
+                ),
+            }
         } else {
             // Write a default config on first run so the user has a file to edit.
             // Silently ignore write errors (e.g. read-only filesystem).
@@ -155,7 +168,24 @@ impl AppConfig {
                 std::fs::write(&path, include_str!("../config/default.toml"))?;
                 Ok(())
             })();
-            Ok(AppConfig::default())
+            (AppConfig::default(), None)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_config_gives_defaults() {
+        let c = AppConfig::from_toml("").unwrap();
+        assert_eq!(c.max_history, 50);
+        assert_eq!(c.hotkey, "ctrl+alt+c");
+    }
+
+    #[test]
+    fn wrong_type_is_an_error() {
+        assert!(AppConfig::from_toml("max_history = \"oops\"").is_err());
     }
 }
