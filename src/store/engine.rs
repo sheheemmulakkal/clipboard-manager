@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::PathBuf;
 
 use crate::clipboard::entry::{ClipboardContent, ClipboardEntry};
@@ -24,7 +25,10 @@ impl PersistenceEngine {
                 tracing::warn!("[persist] read error: {e}");
                 vec![]
             }
-            Ok(data) => parse_file(&data),
+            Ok(data) => {
+                make_private(&self.path);
+                parse_file(&data)
+            }
         }
     }
 
@@ -44,7 +48,14 @@ impl PersistenceEngine {
         let tmp = parent.join(format!("{file_name}.tmp"));
 
         let write_result: anyhow::Result<()> = (|| {
-            let mut f = std::fs::File::create(&tmp)?;
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&tmp)?;
+            // An existing .tmp keeps its old mode; force it.
+            f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
             // Header: magic(8) + version(2) + flags(2) + count(4) + reserved(6) = 22 bytes
             f.write_all(MAGIC)?;
             f.write_all(&VERSION.to_le_bytes())?;
@@ -55,6 +66,7 @@ impl PersistenceEngine {
                 write_entry(&mut f, e)?;
             }
             f.flush()?;
+            f.sync_all()?;
             Ok(())
         })();
 
@@ -64,6 +76,17 @@ impl PersistenceEngine {
         }
 
         Ok(std::fs::rename(&tmp, &self.path)?)
+    }
+}
+
+/// Ensure `path` is readable only by the owner (history can hold secrets).
+fn make_private(path: &std::path::Path) {
+    if let Ok(meta) = std::fs::metadata(path) {
+        if meta.permissions().mode() & 0o077 != 0 {
+            if let Err(e) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)) {
+                tracing::warn!("[persist] cannot restrict permissions: {e}");
+            }
+        }
     }
 }
 
@@ -153,6 +176,14 @@ fn write_label_color(buf: &mut Vec<u8>, label: &Option<String>, color: &Option<S
 
 // ── File parsing ──────────────────────────────────────────────────────────────
 
+/// Result of reading one entry.
+enum ReadOutcome {
+    Entry(ClipboardEntry),
+    /// Entry was well-formed but rejected (oversize / invalid UTF-8); the
+    /// read position is past it, so parsing can continue with the next one.
+    Skipped,
+}
+
 fn parse_file(data: &[u8]) -> Vec<ClipboardEntry> {
     if data.len() < 22 {
         tracing::warn!("[persist] file too short — ignoring");
@@ -163,7 +194,7 @@ fn parse_file(data: &[u8]) -> Vec<ClipboardEntry> {
         return vec![];
     }
     let version = u16::from_le_bytes([data[8], data[9]]);
-    if version != 1 && version != 2 && version != 3 {
+    if !(1..=VERSION).contains(&version) {
         tracing::warn!("[persist] unsupported file version {version} — ignoring history file");
         return vec![];
     }
@@ -179,7 +210,8 @@ fn parse_file(data: &[u8]) -> Vec<ClipboardEntry> {
             _ => read_entry_v3(data, &mut pos),
         };
         match result {
-            Some(e) => entries.push(e),
+            Some(ReadOutcome::Entry(e)) => entries.push(e),
+            Some(ReadOutcome::Skipped) => {}
             None => {
                 tracing::warn!(
                     "[persist] corrupt/truncated at entry {i} — recovered {}/{count} entries",
@@ -197,7 +229,7 @@ fn parse_file(data: &[u8]) -> Vec<ClipboardEntry> {
 
 macro_rules! try_read_bytes {
     ($data:expr, $pos:expr, $n:expr) => {{
-        let end = *$pos + $n;
+        let end = $pos.checked_add($n)?;
         if end > $data.len() {
             return None;
         }
@@ -227,8 +259,60 @@ macro_rules! try_read_u64 {
     }};
 }
 
+/// Read a length-prefixed text body.
+/// `Some(Some(text))` = ok, `Some(None)` = rejected but skipped over
+/// (oversize or invalid UTF-8), `None` = truncated file.
+fn read_text_body(data: &[u8], pos: &mut usize) -> Option<Option<String>> {
+    let content_len = try_read_u32!(data, pos) as usize;
+    let content_bytes = try_read_bytes!(data, pos, content_len);
+    if content_len > MAX_ENTRY_BYTES as usize {
+        tracing::warn!("[persist] entry content too large ({content_len} bytes) — skipping");
+        return Some(None);
+    }
+    match std::str::from_utf8(content_bytes) {
+        Ok(s) => Some(Some(s.to_string())),
+        Err(_) => {
+            tracing::warn!("[persist] invalid UTF-8 in content — skipping entry");
+            Some(None)
+        }
+    }
+}
+
+/// Read an optional length-prefixed string (label / color / tag).
+fn read_opt_string(data: &[u8], pos: &mut usize, what: &str) -> Option<Option<String>> {
+    if try_read_u8!(data, pos) != 1 {
+        return Some(None);
+    }
+    let len = try_read_u32!(data, pos);
+    if len > MAX_ENTRY_BYTES {
+        tracing::warn!("[persist] {what} too large ({len} bytes)");
+        return None;
+    }
+    let bytes = try_read_bytes!(data, pos, len as usize);
+    match std::str::from_utf8(bytes) {
+        Ok(s) => Some(Some(s.to_string())),
+        Err(_) => {
+            tracing::warn!("[persist] invalid UTF-8 in {what}");
+            None
+        }
+    }
+}
+
+/// Verify the trailing CRC32 over `data[entry_start..*pos]`.
+fn check_crc(data: &[u8], entry_start: usize, pos: &mut usize) -> Option<()> {
+    let expected = crc32(&data[entry_start..*pos]);
+    let stored   = try_read_u32!(data, pos);
+    if stored != expected {
+        tracing::warn!(
+            "[persist] CRC32 mismatch (expected {expected:#010x}, got {stored:#010x})"
+        );
+        return None;
+    }
+    Some(())
+}
+
 /// Read a V1 entry (no color field). Sets color = None.
-fn read_entry_v1(data: &[u8], pos: &mut usize) -> Option<ClipboardEntry> {
+fn read_entry_v1(data: &[u8], pos: &mut usize) -> Option<ReadOutcome> {
     let entry_start = *pos;
 
     let id        = try_read_u64!(data, pos);
@@ -236,60 +320,23 @@ fn read_entry_v1(data: &[u8], pos: &mut usize) -> Option<ClipboardEntry> {
     let pinned    = try_read_u8!(data, pos) != 0;
     let _         = try_read_bytes!(data, pos, 3); // pad
 
-    let content_len = try_read_u32!(data, pos);
-    if content_len > MAX_ENTRY_BYTES {
-        tracing::warn!("[persist] entry content too large ({content_len} bytes) — skipping");
-        return None;
-    }
-    let content_bytes = try_read_bytes!(data, pos, content_len as usize);
-    let text = match std::str::from_utf8(content_bytes) {
-        Ok(s) => s.to_string(),
-        Err(_) => {
-            tracing::warn!("[persist] invalid UTF-8 in content — skipping entry");
-            return None;
-        }
-    };
+    let text  = read_text_body(data, pos)?;
+    let label = read_opt_string(data, pos, "label")?;
+    check_crc(data, entry_start, pos)?;
 
-    let has_label = try_read_u8!(data, pos);
-    let label = if has_label == 1 {
-        let label_len = try_read_u32!(data, pos);
-        if label_len > MAX_ENTRY_BYTES {
-            tracing::warn!("[persist] label too large ({label_len} bytes) — skipping");
-            return None;
-        }
-        let label_bytes = try_read_bytes!(data, pos, label_len as usize);
-        match std::str::from_utf8(label_bytes) {
-            Ok(s) => Some(s.to_string()),
-            Err(_) => {
-                tracing::warn!("[persist] invalid UTF-8 in label — skipping entry");
-                return None;
-            }
-        }
-    } else {
-        None
-    };
-
-    let expected = crc32(&data[entry_start..*pos]);
-    let stored   = try_read_u32!(data, pos);
-    if stored != expected {
-        tracing::warn!(
-            "[persist] CRC32 mismatch (expected {expected:#010x}, got {stored:#010x}) — skipping entry"
-        );
-        return None;
-    }
-
-    Some(ClipboardEntry {
+    let Some(text) = text else { return Some(ReadOutcome::Skipped) };
+    Some(ReadOutcome::Entry(ClipboardEntry {
         id,
         content: ClipboardContent::Text(text),
         copied_at,
         pinned,
         label,
         color: None,
-    })
+    }))
 }
 
 /// Read a V2 entry (includes color field after label).
-fn read_entry_v2(data: &[u8], pos: &mut usize) -> Option<ClipboardEntry> {
+fn read_entry_v2(data: &[u8], pos: &mut usize) -> Option<ReadOutcome> {
     let entry_start = *pos;
 
     let id        = try_read_u64!(data, pos);
@@ -297,49 +344,25 @@ fn read_entry_v2(data: &[u8], pos: &mut usize) -> Option<ClipboardEntry> {
     let pinned    = try_read_u8!(data, pos) != 0;
     let _         = try_read_bytes!(data, pos, 3); // pad
 
-    let content_len = try_read_u32!(data, pos);
-    if content_len > MAX_ENTRY_BYTES {
-        tracing::warn!("[persist] entry content too large ({content_len} bytes) — skipping");
-        return None;
-    }
-    let content_bytes = try_read_bytes!(data, pos, content_len as usize);
-    let text = match std::str::from_utf8(content_bytes) {
-        Ok(s) => s.to_string(),
-        Err(_) => {
-            tracing::warn!("[persist] invalid UTF-8 in content — skipping entry");
-            return None;
-        }
-    };
+    let text  = read_text_body(data, pos)?;
+    let label = read_opt_string(data, pos, "label")?;
+    let color = read_opt_string(data, pos, "color")?;
+    check_crc(data, entry_start, pos)?;
 
-    let (label, color) = read_label_color(data, pos)?;
-
-    let expected = crc32(&data[entry_start..*pos]);
-    let stored   = try_read_u32!(data, pos);
-    if stored != expected {
-        tracing::warn!(
-            "[persist] CRC32 mismatch (expected {expected:#010x}, got {stored:#010x}) — skipping entry"
-        );
-        return None;
-    }
-
-    Some(ClipboardEntry {
+    let Some(text) = text else { return Some(ReadOutcome::Skipped) };
+    Some(ReadOutcome::Entry(ClipboardEntry {
         id,
         content: ClipboardContent::Text(text),
         copied_at,
         pinned,
         label,
         color,
-    })
+    }))
 }
 
 /// Read a V3 entry: reads type byte first, then dispatches text or image layout.
-fn read_entry_v3(data: &[u8], pos: &mut usize) -> Option<ClipboardEntry> {
-    if *pos >= data.len() {
-        return None;
-    }
-    let entry_type = data[*pos];
-    *pos += 1;
-
+fn read_entry_v3(data: &[u8], pos: &mut usize) -> Option<ReadOutcome> {
+    let entry_type = try_read_u8!(data, pos);
     let entry_start = *pos;
 
     let id        = try_read_u64!(data, pos);
@@ -348,21 +371,7 @@ fn read_entry_v3(data: &[u8], pos: &mut usize) -> Option<ClipboardEntry> {
     let _         = try_read_bytes!(data, pos, 3); // pad
 
     let content = if entry_type == 0 {
-        // Text entry
-        let content_len = try_read_u32!(data, pos);
-        if content_len > MAX_ENTRY_BYTES {
-            tracing::warn!("[persist] entry content too large ({content_len} bytes) — skipping");
-            return None;
-        }
-        let content_bytes = try_read_bytes!(data, pos, content_len as usize);
-        let text = match std::str::from_utf8(content_bytes) {
-            Ok(s) => s.to_string(),
-            Err(_) => {
-                tracing::warn!("[persist] invalid UTF-8 in content — skipping entry");
-                return None;
-            }
-        };
-        ClipboardContent::Text(text)
+        read_text_body(data, pos)?.map(ClipboardContent::Text)
     } else {
         // Image entry (type = 1)
         let hash_bytes = try_read_bytes!(data, pos, 32);
@@ -370,62 +379,150 @@ fn read_entry_v3(data: &[u8], pos: &mut usize) -> Option<ClipboardEntry> {
         hash.copy_from_slice(hash_bytes);
         let width  = try_read_u32!(data, pos);
         let height = try_read_u32!(data, pos);
-        ClipboardContent::Image { hash, width, height }
+        Some(ClipboardContent::Image { hash, width, height })
     };
 
-    let (label, color) = read_label_color(data, pos)?;
+    let label = read_opt_string(data, pos, "label")?;
+    let color = read_opt_string(data, pos, "color")?;
+    check_crc(data, entry_start, pos)?;
 
-    let expected = crc32(&data[entry_start..*pos]);
-    let stored   = try_read_u32!(data, pos);
-    if stored != expected {
-        tracing::warn!(
-            "[persist] CRC32 mismatch (expected {expected:#010x}, got {stored:#010x}) — skipping entry"
-        );
-        return None;
-    }
-
-    Some(ClipboardEntry { id, content, copied_at, pinned, label, color })
+    let Some(content) = content else { return Some(ReadOutcome::Skipped) };
+    Some(ReadOutcome::Entry(ClipboardEntry { id, content, copied_at, pinned, label, color }))
 }
 
-/// Read label + color fields (shared by V2 and V3).
-fn read_label_color(data: &[u8], pos: &mut usize) -> Option<(Option<String>, Option<String>)> {
-    let has_label = try_read_u8!(data, pos);
-    let label = if has_label == 1 {
-        let label_len = try_read_u32!(data, pos);
-        if label_len > MAX_ENTRY_BYTES {
-            tracing::warn!("[persist] label too large ({label_len} bytes) — skipping");
-            return None;
-        }
-        let label_bytes = try_read_bytes!(data, pos, label_len as usize);
-        match std::str::from_utf8(label_bytes) {
-            Ok(s) => Some(s.to_string()),
-            Err(_) => {
-                tracing::warn!("[persist] invalid UTF-8 in label — skipping entry");
-                return None;
-            }
-        }
-    } else {
-        None
-    };
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let has_color = try_read_u8!(data, pos);
-    let color = if has_color == 1 {
-        let color_len = try_read_u32!(data, pos);
-        if color_len > MAX_ENTRY_BYTES {
-            tracing::warn!("[persist] color too large ({color_len} bytes) — skipping");
-            return None;
-        }
-        let color_bytes = try_read_bytes!(data, pos, color_len as usize);
-        match std::str::from_utf8(color_bytes) {
-            Ok(s) => Some(s.to_string()),
-            Err(_) => {
-                tracing::warn!("[persist] invalid UTF-8 in color — skipping entry");
-                return None;
-            }
-        }
-    } else {
-        None
-    };
+    fn tmp(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("cm-test-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d.join("history.bin")
+    }
 
-    Some((label, color))
+    fn text(id: u64, s: &str) -> ClipboardEntry {
+        ClipboardEntry::new_text(id, s.into())
+    }
+
+    /// Hand-built V2 file (no type byte, text only, label + color).
+    fn v2_bytes(entries: &[(u64, &str, Option<&str>, Option<&str>)]) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(MAGIC);
+        out.extend_from_slice(&2u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&(entries.len() as u32).to_le_bytes());
+        out.extend_from_slice(&[0u8; 6]);
+        for (id, content, label, color) in entries {
+            let mut buf = Vec::new();
+            buf.extend_from_slice(&id.to_le_bytes());
+            buf.extend_from_slice(&1000u64.to_le_bytes());
+            buf.push(0);
+            buf.extend_from_slice(&[0u8; 3]);
+            buf.extend_from_slice(&(content.len() as u32).to_le_bytes());
+            buf.extend_from_slice(content.as_bytes());
+            write_label_color(&mut buf, &label.map(String::from), &color.map(String::from));
+            let c = crc32(&buf);
+            buf.extend_from_slice(&c.to_le_bytes());
+            out.extend_from_slice(&buf);
+        }
+        out
+    }
+
+    #[test]
+    fn roundtrip_text_image_and_meta() {
+        let p = tmp("rt");
+        let mut a = text(1, "hello");
+        a.pinned = true;
+        a.label = Some("L".into());
+        a.color = Some("red".into());
+        let b = ClipboardEntry::new_image(2, [7u8; 32], 10, 20);
+        let e = PersistenceEngine::new(p);
+        e.flush(&[&a, &b]).unwrap();
+        let got = e.load();
+        assert_eq!(got.len(), 2);
+        assert!(got[0].pinned);
+        assert_eq!(got[0].label.as_deref(), Some("L"));
+        assert_eq!(got[0].color.as_deref(), Some("red"));
+        assert!(matches!(got[1].content, ClipboardContent::Image { width: 10, height: 20, .. }));
+    }
+
+    #[test]
+    fn v2_file_still_loads() {
+        let p = tmp("v2");
+        std::fs::write(&p, v2_bytes(&[(1, "a", Some("lbl"), None), (2, "b", None, Some("blue"))])).unwrap();
+        let got = PersistenceEngine::new(p).load();
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].label.as_deref(), Some("lbl"));
+        assert_eq!(got[1].color.as_deref(), Some("blue"));
+    }
+
+    #[test]
+    fn v1_file_still_loads() {
+        // V1 = V2 layout without the color field.
+        let mut out = Vec::new();
+        out.extend_from_slice(MAGIC);
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&1u32.to_le_bytes());
+        out.extend_from_slice(&[0u8; 6]);
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&9u64.to_le_bytes());
+        buf.extend_from_slice(&1000u64.to_le_bytes());
+        buf.push(1);
+        buf.extend_from_slice(&[0u8; 3]);
+        buf.extend_from_slice(&3u32.to_le_bytes());
+        buf.extend_from_slice(b"old");
+        buf.push(0); // no label
+        let c = crc32(&buf);
+        buf.extend_from_slice(&c.to_le_bytes());
+        out.extend_from_slice(&buf);
+        let p = tmp("v1");
+        std::fs::write(&p, out).unwrap();
+        let got = PersistenceEngine::new(p).load();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].id, 9);
+        assert!(got[0].pinned);
+        assert!(matches!(&got[0].content, ClipboardContent::Text(t) if t == "old"));
+    }
+
+    #[test]
+    fn oversize_entry_is_skipped_not_fatal() {
+        let p = tmp("big");
+        let big = text(1, &"x".repeat(MAX_ENTRY_BYTES as usize + 1));
+        let small = text(2, "after");
+        PersistenceEngine::new(p.clone()).flush(&[&big, &small]).unwrap();
+        let got = PersistenceEngine::new(p).load();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].id, 2);
+    }
+
+    #[test]
+    fn truncated_file_recovers_prefix() {
+        let p = tmp("trunc");
+        PersistenceEngine::new(p.clone()).flush(&[&text(1, "a"), &text(2, "b")]).unwrap();
+        let data = std::fs::read(&p).unwrap();
+        std::fs::write(&p, &data[..data.len() - 3]).unwrap();
+        assert_eq!(PersistenceEngine::new(p).load().len(), 1);
+    }
+
+    #[test]
+    fn history_file_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let p = tmp("perm");
+        PersistenceEngine::new(p.clone()).flush(&[&text(1, "secret")]).unwrap();
+        let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
+    #[test]
+    fn load_tightens_existing_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let p = tmp("perm2");
+        PersistenceEngine::new(p.clone()).flush(&[&text(1, "secret")]).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o664)).unwrap();
+        PersistenceEngine::new(p.clone()).load();
+        let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
 }
