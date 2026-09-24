@@ -1,6 +1,7 @@
 //! Ordering and search filtering of history entries (pure, no GTK).
 
 use crate::clipboard::entry::{ClipboardContent, ClipboardEntry};
+use crate::clipboard::kind::ContentKind;
 
 /// Pinned entries first, then everything else; newest first within each group.
 /// `entries` is in store order (oldest → newest), which breaks ties between
@@ -11,7 +12,8 @@ pub fn sorted(mut entries: Vec<ClipboardEntry>) -> Vec<ClipboardEntry> {
     entries
 }
 
-/// Case-insensitive substring match on content (or "image WxH"), label and tag.
+/// Case-insensitive substring match on content (or "image WxH"), detected
+/// kind ("url", "code", …) and label.
 /// An empty query matches everything.
 pub fn matches_query(e: &ClipboardEntry, query: &str) -> bool {
     if query.is_empty() {
@@ -19,7 +21,10 @@ pub fn matches_query(e: &ClipboardEntry, query: &str) -> bool {
     }
     let q = query.to_lowercase();
     let content_match = match &e.content {
-        ClipboardContent::Text(t) => t.to_lowercase().contains(&q),
+        ClipboardContent::Text(t) => {
+            t.to_lowercase().contains(&q)
+                || ContentKind::detect(t).title().to_lowercase().contains(&q)
+        }
         ClipboardContent::Image { width, height, .. } => {
             format!("image {width}\u{00d7}{height} {width}x{height}").contains(&q)
         }
@@ -68,6 +73,13 @@ mod tests {
         assert!(matches_query(&e, "BODY"));
         assert!(!matches_query(&e, "nothing"));
         assert!(matches_query(&e, ""));
+    }
+
+    #[test]
+    fn search_matches_kind_name() {
+        assert!(matches_query(&text(1, "https://example.com", 1), "url"));
+        assert!(matches_query(&text(2, "git status", 1), "shell"));
+        assert!(!matches_query(&text(3, "plain words", 1), "url"));
     }
 
     #[test]
