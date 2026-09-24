@@ -13,8 +13,11 @@ max_history = 50
 #   hotkey = "super+shift+v"    # Win+Shift+V
 hotkey = "ctrl+alt+c"
 
-popup_width = 460
-popup_max_items = 20
+# Look of the popup: "dark" (default), "light", or "system" (follow the GTK theme).
+theme = "dark"
+
+popup_width = 440
+popup_height = 560
 show_timestamps = true
 deduplicate = true
 

@@ -5,8 +5,8 @@ use serde::Deserialize;
 
 fn default_max_history() -> usize { 50 }
 fn default_hotkey() -> String { "ctrl+alt+c".to_string() }
-fn default_popup_width() -> i32 { 420 }
-fn default_popup_max_items() -> usize { 20 }
+fn default_popup_width() -> i32 { 440 }
+fn default_popup_height() -> i32 { 560 }
 fn default_show_timestamps() -> bool { true }
 fn default_deduplicate() -> bool { true }
 fn default_popup_follow_cursor() -> bool { true }
@@ -22,6 +22,20 @@ fn default_font_title() -> u32 { 13 }
 fn default_font_buttons() -> u32 { 13 }
 fn default_font_undo() -> u32 { 12 }
 fn default_row_height() -> u32 { 44 }
+
+// ── Theme ─────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, Clone, Copy, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeName {
+    /// Built-in dark theme (default).
+    #[default]
+    Dark,
+    /// Built-in light theme.
+    Light,
+    /// Follow the active GTK theme.
+    System,
+}
 
 // ── Color overrides ───────────────────────────────────────────────────────────
 
@@ -97,10 +111,13 @@ pub struct AppConfig {
     pub max_history: usize,
     #[serde(default = "default_hotkey")]
     pub hotkey: String,
+    /// `"dark"` (default), `"light"` or `"system"` (follow the GTK theme).
+    #[serde(default)]
+    pub theme: ThemeName,
     #[serde(default = "default_popup_width")]
     pub popup_width: i32,
-    #[serde(default = "default_popup_max_items")]
-    pub popup_max_items: usize,
+    #[serde(default = "default_popup_height")]
+    pub popup_height: i32,
     #[serde(default = "default_show_timestamps")]
     pub show_timestamps: bool,
     #[serde(default = "default_deduplicate")]
@@ -129,8 +146,9 @@ impl Default for AppConfig {
         Self {
             max_history:             default_max_history(),
             hotkey:                  default_hotkey(),
+            theme:                   ThemeName::default(),
             popup_width:             default_popup_width(),
-            popup_max_items:         default_popup_max_items(),
+            popup_height:            default_popup_height(),
             show_timestamps:         default_show_timestamps(),
             deduplicate:             default_deduplicate(),
             popup_follow_cursor:     default_popup_follow_cursor(),
