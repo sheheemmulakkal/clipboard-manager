@@ -129,16 +129,6 @@ impl Store for MemoryStore {
         self.entries.retain(|e| e.id != id);
     }
 
-    fn clear(&mut self) {
-        self.entries.clear();
-    }
-
-    fn contains_text(&self, text: &str) -> bool {
-        self.entries.iter().any(|e| {
-            if let ClipboardContent::Text(t) = &e.content { t == text } else { false }
-        })
-    }
-
     fn contains_image_hash(&self, hash: &[u8; 32]) -> bool {
         self.entries.iter().any(|e| {
             if let ClipboardContent::Image { hash: h, .. } = &e.content { h == hash } else { false }
@@ -155,6 +145,13 @@ fn same_content(a: &ClipboardContent, b: &ClipboardContent) -> bool {
         (ClipboardContent::Text(x), ClipboardContent::Text(y)) => x == y,
         (ClipboardContent::Image { hash: x, .. }, ClipboardContent::Image { hash: y, .. }) => x == y,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+impl MemoryStore {
+    fn contains_text(&self, text: &str) -> bool {
+        self.entries.iter().any(|e| matches!(&e.content, ClipboardContent::Text(t) if t == text))
     }
 }
 

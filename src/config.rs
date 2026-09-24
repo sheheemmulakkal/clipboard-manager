@@ -115,7 +115,6 @@ impl Default for SizeConfig {
 // ── AppConfig ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, Clone)]
-#[allow(dead_code)]
 pub struct AppConfig {
     #[serde(default = "default_max_history")]
     pub max_history: usize,

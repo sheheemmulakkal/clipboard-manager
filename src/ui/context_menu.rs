@@ -32,17 +32,28 @@ pub fn clean_tag(s: &str) -> Option<String> {
     (!t.is_empty()).then(|| t.chars().take(MAX_TAG_CHARS).collect())
 }
 
-/// Open the menu for `entry`, pointing at (`x`, `y`) inside `row`.
+/// What the menu needs from its surroundings.
+#[derive(Clone)]
+pub struct MenuEnv {
+    pub theme:    Rc<Theme>,
+    /// Tags used anywhere in the history.
+    pub tags:     Rc<Vec<String>>,
+    /// The popup's "don't close on focus loss" counter.
+    pub suppress: Rc<Cell<u32>>,
+}
+
+/// Open the menu for `entry`, pointing at `point` inside `row` (or at the row).
 pub fn show(
-    row:      &ListBoxRow,
-    point:    Option<(f64, f64)>,
-    entry:    &ClipboardEntry,
-    theme:    &Theme,
-    tags:     &[String],
-    suppress: &Rc<Cell<u32>>,
-    emit:     Rc<dyn Fn(RowAction)>,
-    ui:       UiHooks,
+    row:   &ListBoxRow,
+    point: Option<(f64, f64)>,
+    entry: &ClipboardEntry,
+    env:   &MenuEnv,
+    emit:  Rc<dyn Fn(RowAction)>,
+    ui:    UiHooks,
 ) {
+    let theme = env.theme.as_ref();
+    let tags = env.tags.as_slice();
+    let suppress = &env.suppress;
     let popover = Popover::new();
     popover.add_css_class("cm-menu");
     popover.set_has_arrow(false);

@@ -35,11 +35,6 @@ pub fn normalize_color(name: &str) -> Option<&'static str> {
     COLORS.iter().find(|(n, _)| *n == name).map(|(n, _)| *n)
 }
 
-pub fn color_hex(name: &str) -> Option<&'static str> {
-    let name = normalize_color(name)?;
-    COLORS.iter().find(|(n, _)| *n == name).map(|(_, h)| *h)
-}
-
 /// Colour name for a tag pill: the default mapping for built-in tags,
 /// otherwise a stable pick from the palette based on the tag text.
 pub fn tag_color(tag: &str) -> &'static str {
@@ -218,7 +213,6 @@ mod tests {
         assert_eq!(normalize_color("teal"), Some("blue"));
         assert_eq!(normalize_color("green"), Some("green"));
         assert_eq!(normalize_color("nonsense"), None);
-        assert_eq!(color_hex("purple"), Some("#a855f7"));
     }
 
     #[test]

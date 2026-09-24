@@ -34,8 +34,10 @@ struct UndoPending {
 /// Shared slot for the controller's event callback. Cloned into every
 /// signal handler; looked up at emit time so it can be set after the
 /// widgets are built.
+type EventCallback = Rc<dyn Fn(PopupEvent)>;
+
 #[derive(Clone, Default)]
-struct EventHandler(Rc<RefCell<Option<Rc<dyn Fn(PopupEvent)>>>>);
+struct EventHandler(Rc<RefCell<Option<EventCallback>>>);
 
 impl EventHandler {
     fn emit(&self, ev: PopupEvent) {
@@ -839,7 +841,8 @@ fn build_header_menu(theme: &Theme, handler: &EventHandler, suppress: &Rc<Cell<u
     }
     vbox.append(&pause_btn);
 
-    let items: [(Icon, &str, fn() -> PopupEvent); 4] = [
+    type MenuEntry = (Icon, &'static str, fn() -> PopupEvent);
+    let items: [MenuEntry; 4] = [
         (Icon::Trash,     "Clear history", || PopupEvent::ClearAll),
         (Icon::Settings,  "Settings",      || PopupEvent::Menu(MenuAction::OpenSettings)),
         (Icon::Clipboard, "About",         || PopupEvent::Menu(MenuAction::About)),

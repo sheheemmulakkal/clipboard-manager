@@ -19,8 +19,9 @@ use crate::store::memory::MemoryStore;
 use crate::store::Store;
 use crate::ui::ClipboardPopup;
 
-/// D-Bus application id (single-instance name).
-pub const APP_ID: &str = "com.example.clipboard-manager";
+fn should_write_autostart(user_entry: bool, system_entry: bool, written_before: bool) -> bool {
+    !user_entry && !system_entry && !written_before
+}
 
 pub struct App {
     config:       AppConfig,
@@ -52,28 +53,39 @@ impl App {
         let image_dir = paths::image_dir();
 
         // Startup GC: delete image files not referenced by any current store entry.
-        gc_image_files(&image_dir, &store.borrow());
+        gc_image_files(&image_dir, store.borrow().as_ref());
 
         Ok(Self { config, store, config_error })
     }
 
+    /// Write `~/.config/autostart/clipboard-manager.desktop` once, for installs
+    /// without the system-wide entry (e.g. `cargo install`). Never re-created
+    /// after the user deletes it, so autostart can be turned off.
     fn autostart_if_needed() -> Result<()> {
+        const SYSTEM_ENTRY: &str = "/etc/xdg/autostart/clipboard-manager.desktop";
+        let marker = crate::paths::state_dir().join("autostart-installed");
         let autostart_dir = dirs::config_dir()
             .ok_or_else(|| anyhow!("no config dir"))?
             .join("autostart");
         let dest = autostart_dir.join("clipboard-manager.desktop");
-        if !dest.exists() {
-            std::fs::create_dir_all(&autostart_dir)?;
-            let exe = std::env::current_exe()?;
-            let content = format!(
-                "[Desktop Entry]\nType=Application\nName=Clipboard Manager\n\
-                 Comment=Clipboard history popup\nExec={}\nIcon=edit-paste\n\
-                 Terminal=false\nCategories=Utility;\nStartupNotify=false\n",
-                exe.display()
-            );
-            std::fs::write(&dest, content)?;
-            tracing::debug!("[autostart] installed to {}", dest.display());
+        if !should_write_autostart(
+            dest.exists(),
+            std::path::Path::new(SYSTEM_ENTRY).exists(),
+            marker.exists(),
+        ) {
+            return Ok(());
         }
+        std::fs::create_dir_all(&autostart_dir)?;
+        let exe = std::env::current_exe()?;
+        let content = format!(
+            "[Desktop Entry]\nType=Application\nName=Clipboard Manager\n\
+             Comment=Clipboard history popup\nExec={}\nIcon=edit-paste\n\
+             Terminal=false\nCategories=Utility;\nStartupNotify=false\n",
+            exe.display()
+        );
+        std::fs::write(&dest, content)?;
+        std::fs::write(&marker, b"")?;
+        tracing::debug!("[autostart] installed to {}", dest.display());
         Ok(())
     }
 
@@ -88,7 +100,7 @@ impl App {
             .init();
 
         let app = Application::builder()
-            .application_id(APP_ID)
+            .application_id(crate::paths::application_id())
             .flags(gtk4::gio::ApplicationFlags::HANDLES_COMMAND_LINE)
             .build();
 
@@ -208,7 +220,7 @@ impl App {
 }
 
 /// Startup GC: delete image files in `image_dir` whose hash is not in the store.
-fn gc_image_files(image_dir: &std::path::Path, store: &Box<dyn Store>) {
+fn gc_image_files(image_dir: &std::path::Path, store: &dyn Store) {
     use std::collections::HashSet;
     let hashes: HashSet<String> = store.get_all().iter()
         .filter_map(|e| {
@@ -238,5 +250,18 @@ fn gc_image_files(image_dir: &std::path::Path, store: &Box<dyn Store>) {
             tracing::debug!("[gc] removing orphaned image file: {name}");
             let _ = std::fs::remove_file(entry.path());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn autostart_written_only_once_and_not_over_system_entry() {
+        assert!(should_write_autostart(false, false, false));
+        assert!(!should_write_autostart(true, false, false)); // user file exists
+        assert!(!should_write_autostart(false, true, false)); // system entry (.deb)
+        assert!(!should_write_autostart(false, false, true)); // written before, user deleted it
     }
 }

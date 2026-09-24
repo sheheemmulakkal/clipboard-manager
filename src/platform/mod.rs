@@ -52,9 +52,9 @@ pub trait Platform: Send + Sync {
 
     /// Move the GTK4 popup window to screen position (x, y).
     ///
-    /// * X11     – obtains the X11 window ID via `gdk4-x11` and calls
-    ///             `configure_window`.
-    /// * Wayland – no-op; the compositor positions the window.
+    /// * X11: obtains the X11 window ID via `gdk4-x11` and calls
+    ///   `configure_window`.
+    /// * Wayland: no-op; the compositor positions the window.
     fn move_popup(&self, window: &gtk4::Window, x: i32, y: i32);
 
     /// Returns `true` if mouse button 1 is physically held down.

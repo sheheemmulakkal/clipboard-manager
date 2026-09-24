@@ -56,11 +56,6 @@ impl ClipboardEntry {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn as_text(&self) -> Option<&str> {
-        if let ClipboardContent::Text(t) = &self.content { Some(t) } else { None }
-    }
-
     pub fn is_image(&self) -> bool {
         matches!(&self.content, ClipboardContent::Image { .. })
     }

@@ -38,6 +38,9 @@ pub struct RowContext {
     pub tags:            Rc<Vec<String>>,
 }
 
+/// Opens the context menu, pointing at a position inside the row (or the row).
+type OpenMenuAt = dyn Fn(Option<(f64, f64)>);
+
 /// A built row plus hooks the popup's keyboard shortcuts use.
 pub struct ItemRow {
     pub row:   ListBoxRow,
@@ -248,19 +251,21 @@ pub fn build_item_row(
     };
 
     // Context menu: right-click at the pointer, or keyboard at the row.
-    let open_menu_at: Rc<dyn Fn(Option<(f64, f64)>)> = {
-        let row      = row.clone();
-        let entry    = entry.clone();
-        let theme    = Rc::clone(&ctx.theme);
-        let tags     = Rc::clone(&ctx.tags);
-        let suppress = Rc::clone(&ctx.suppress_close);
-        let cb       = Rc::clone(&on_action);
+    let open_menu_at: Rc<OpenMenuAt> = {
+        let row   = row.clone();
+        let entry = entry.clone();
+        let env   = context_menu::MenuEnv {
+            theme:    Rc::clone(&ctx.theme),
+            tags:     Rc::clone(&ctx.tags),
+            suppress: Rc::clone(&ctx.suppress_close),
+        };
+        let cb    = Rc::clone(&on_action);
         let ui = context_menu::UiHooks {
             edit:    Rc::clone(&open_editor),
             preview: Rc::clone(&open_preview),
         };
         Rc::new(move |point| {
-            context_menu::show(&row, point, &entry, &theme, &tags, &suppress, Rc::clone(&cb), ui.clone());
+            context_menu::show(&row, point, &entry, &env, Rc::clone(&cb), ui.clone());
         })
     };
     {

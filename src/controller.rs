@@ -32,8 +32,10 @@ pub struct Controller {
     chip:        RefCell<Chip>,
     /// Shared with the clipboard monitor, which skips changes while set.
     paused:      Rc<Cell<bool>>,
-    pause_listeners: RefCell<Vec<Box<dyn Fn(bool)>>>,
+    pause_listeners: RefCell<Vec<PauseListener>>,
 }
+
+type PauseListener = Box<dyn Fn(bool)>;
 
 /// New pause state for a request (`None` = toggle).
 fn resolve_paused(current: bool, request: Option<bool>) -> bool {

@@ -91,21 +91,12 @@ impl Store for PersistentStore {
         self.flush();
     }
 
-    fn clear(&mut self) {
-        self.inner.clear();
-        self.flush();
-    }
-
     fn get_all(&self) -> Vec<&ClipboardEntry> {
         self.inner.get_all()
     }
 
     fn len(&self) -> usize {
         self.inner.len()
-    }
-
-    fn contains_text(&self, text: &str) -> bool {
-        self.inner.contains_text(text)
     }
 
     fn contains_image_hash(&self, hash: &[u8; 32]) -> bool {

@@ -28,7 +28,6 @@ pub enum Icon {
     PinFilled,
     Menu,
     X,
-    Search,
     Copy,
     Trash,
     ArrowUp,
@@ -36,20 +35,18 @@ pub enum Icon {
     Pencil,
     Tag,
     Pause,
-    Play,
     Settings,
     Power,
     ChevronRight,
     ChevronLeft,
     Plus,
     Clipboard,
-    Keyboard,
     Check,
 }
 
 impl Icon {
     #[cfg(test)]
-    pub const ALL: &'static [Icon] = &[Icon::FileText, Icon::Type, Icon::Terminal, Icon::Code, Icon::Link, Icon::Shield, Icon::Mail, Icon::Folder, Icon::Palette, Icon::Image, Icon::Pin, Icon::PinFilled, Icon::Menu, Icon::X, Icon::Search, Icon::Copy, Icon::Trash, Icon::ArrowUp, Icon::Eye, Icon::Pencil, Icon::Tag, Icon::Pause, Icon::Play, Icon::Settings, Icon::Power, Icon::ChevronRight, Icon::ChevronLeft, Icon::Plus, Icon::Clipboard, Icon::Keyboard, Icon::Check];
+    pub const ALL: &'static [Icon] = &[Icon::FileText, Icon::Type, Icon::Terminal, Icon::Code, Icon::Link, Icon::Shield, Icon::Mail, Icon::Folder, Icon::Palette, Icon::Image, Icon::Pin, Icon::PinFilled, Icon::Menu, Icon::X, Icon::Copy, Icon::Trash, Icon::ArrowUp, Icon::Eye, Icon::Pencil, Icon::Tag, Icon::Pause, Icon::Settings, Icon::Power, Icon::ChevronRight, Icon::ChevronLeft, Icon::Plus, Icon::Clipboard, Icon::Check];
 
     fn svg(self) -> &'static str {
         match self {
@@ -67,7 +64,6 @@ impl Icon {
             Icon::PinFilled => include_str!("../../assets/icons/pin-filled.svg"),
             Icon::Menu => include_str!("../../assets/icons/menu.svg"),
             Icon::X => include_str!("../../assets/icons/x.svg"),
-            Icon::Search => include_str!("../../assets/icons/search.svg"),
             Icon::Copy => include_str!("../../assets/icons/copy.svg"),
             Icon::Trash => include_str!("../../assets/icons/trash.svg"),
             Icon::ArrowUp => include_str!("../../assets/icons/arrow-up.svg"),
@@ -75,14 +71,12 @@ impl Icon {
             Icon::Pencil => include_str!("../../assets/icons/pencil.svg"),
             Icon::Tag => include_str!("../../assets/icons/tag.svg"),
             Icon::Pause => include_str!("../../assets/icons/pause.svg"),
-            Icon::Play => include_str!("../../assets/icons/play.svg"),
             Icon::Settings => include_str!("../../assets/icons/settings.svg"),
             Icon::Power => include_str!("../../assets/icons/power.svg"),
             Icon::ChevronRight => include_str!("../../assets/icons/chevron-right.svg"),
             Icon::ChevronLeft => include_str!("../../assets/icons/chevron-left.svg"),
             Icon::Plus => include_str!("../../assets/icons/plus.svg"),
             Icon::Clipboard => include_str!("../../assets/icons/clipboard.svg"),
-            Icon::Keyboard => include_str!("../../assets/icons/keyboard.svg"),
             Icon::Check => include_str!("../../assets/icons/check.svg"),
         }
     }

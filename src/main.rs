@@ -82,7 +82,7 @@ fn send_to_running(args: &[String], command: &cli::Command) -> i32 {
     use gtk4::gio;
     use gtk4::gio::prelude::*;
 
-    let app = gio::Application::new(Some(app::APP_ID), gio::ApplicationFlags::HANDLES_COMMAND_LINE);
+    let app = gio::Application::new(Some(&paths::application_id()), gio::ApplicationFlags::HANDLES_COMMAND_LINE);
     if let Err(e) = app.register(None::<&gio::Cancellable>) {
         eprintln!("clipboard-manager: cannot reach the session bus: {e}");
         return 1;
@@ -153,7 +153,7 @@ fn is_running() -> bool {
         "/org/freedesktop/DBus",
         "org.freedesktop.DBus",
         "NameHasOwner",
-        Some(&(app::APP_ID,).to_variant()),
+        Some(&(paths::application_id(),).to_variant()),
         Some(glib::VariantTy::new("(b)").unwrap()),
         gio::DBusCallFlags::NONE,
         1000,

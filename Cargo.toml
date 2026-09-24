@@ -15,7 +15,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
-chrono = "0.4"
 ksni = { version = "0.3", features = ["blocking"] }
 dirs = "5"
 ashpd = "0.9"

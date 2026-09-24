@@ -5,14 +5,12 @@ use super::Platform;
 
 /// Wayland backend.
 ///
-/// * Paste     – `org.freedesktop.portal.RemoteDesktop` (ashpd).
-///               A single portal session is created on the first paste and
-///               reused for every subsequent paste, so the permission dialog
-///               appears at most once per application run.
-/// * Cursor    – not exposed by Wayland; returns `None`.
-/// * move_popup – no-op; the compositor positions windows.
-/// * button1_held / can_query_button1 – always false; Wayland does not expose
-///               pointer button state to other clients.
+/// * Paste: `org.freedesktop.portal.RemoteDesktop` (ashpd). A saved restore
+///   token means the permission dialog appears once, not on every login.
+/// * Cursor: not exposed by Wayland; returns `None` (the popup is centred).
+/// * `move_popup`: no-op; the compositor positions windows.
+/// * `button1_held` / `can_query_button1`: always false; Wayland does not
+///   expose pointer button state to other clients.
 pub struct WaylandPlatform {
     #[allow(dead_code)] // keeps the runtime alive for the paste daemon task
     rt:       Runtime,
@@ -27,10 +25,6 @@ impl WaylandPlatform {
         Self { rt, paste_tx }
     }
 }
-
-// SAFETY: tokio Runtime and mpsc::Sender are Send+Sync.
-unsafe impl Send for WaylandPlatform {}
-unsafe impl Sync for WaylandPlatform {}
 
 impl Platform for WaylandPlatform {
     fn capture_active_window(&self) -> Option<u64> {

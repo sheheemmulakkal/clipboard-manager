@@ -116,7 +116,7 @@ fn on_clipboard_changed(clipboard: &gdk4::Clipboard, state: &Rc<State>) {
     }
 
     let formats = clipboard.formats();
-    let mime_types: Vec<glib::GString> = formats.mime_types().iter().cloned().collect();
+    let mime_types: Vec<glib::GString> = formats.mime_types().to_vec();
     let mime_refs: Vec<&str> = mime_types.iter().map(|m| m.as_str()).collect();
     let raw_targets = state.platform.clipboard_targets().unwrap_or_default();
     let raw_refs: Vec<&str> = raw_targets.iter().map(String::as_str).collect();
