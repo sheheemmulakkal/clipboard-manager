@@ -116,7 +116,7 @@ impl App {
             // ── Platform detection (Strategy pattern) ─────────────────────
             let platform = platform::detect();
 
-            let popup = ClipboardPopup::new(app, Arc::clone(&platform), config.nerd_font, &config.colors, &config.sizes);
+            let popup = ClipboardPopup::new(app, Arc::clone(&platform), &config);
             let controller = Controller::new(config.clone(), Rc::clone(&store), popup, Arc::clone(&platform));
 
             // ── Clipboard monitor ─────────────────────────────────────────

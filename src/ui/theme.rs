@@ -75,6 +75,17 @@ pub struct Theme {
 }
 
 impl Theme {
+    /// Accent as a concrete hex colour (for SVG icons).
+    pub fn accent_icon(&self) -> String {
+        if self.accent.starts_with('#') { self.accent.clone() } else { "#3584e4".into() }
+    }
+
+    /// Use the GTK theme's actual foreground colour for icons ("system" theme).
+    pub fn adopt_foreground(&mut self, hex: &str) {
+        self.icon = hex.to_string();
+        self.icon_muted = hex.to_string();
+    }
+
     pub fn resolve(name: ThemeName, o: &ColorConfig) -> Theme {
         let base = match name {
             ThemeName::Dark => Theme {
@@ -177,6 +188,22 @@ mod tests {
         let t = Theme::resolve(ThemeName::Dark, &colors);
         assert_eq!(t.accent, "#123456");
         assert_eq!(t.bg, Theme::resolve(ThemeName::Dark, &ColorConfig::default()).bg);
+    }
+
+    #[test]
+    fn accent_icon_is_always_a_hex_colour() {
+        let dark = Theme::resolve(ThemeName::Dark, &ColorConfig::default());
+        assert_eq!(dark.accent_icon(), "#f97316");
+        let sys = Theme::resolve(ThemeName::System, &ColorConfig::default());
+        assert!(sys.accent_icon().starts_with('#'));
+    }
+
+    #[test]
+    fn system_theme_adopts_runtime_foreground() {
+        let mut t = Theme::resolve(ThemeName::System, &ColorConfig::default());
+        t.adopt_foreground("#202020");
+        assert_eq!(t.icon, "#202020");
+        assert_eq!(t.icon_muted, "#202020");
     }
 
     #[test]

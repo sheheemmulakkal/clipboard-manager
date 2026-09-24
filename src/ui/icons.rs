@@ -9,7 +9,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use gdk_pixbuf::prelude::*;
-use gtk4::prelude::*;
+use gdk4::subclass::prelude::ObjectSubclassIsExt;
+use glib::prelude::*;
+use gtk4::prelude::WidgetExt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Icon {
@@ -118,22 +120,28 @@ fn render_pixbuf(icon: Icon, color: &str, px: i32) -> Result<gdk_pixbuf::Pixbuf,
         .ok_or_else(|| glib::Error::new(glib::FileError::Failed, "svg loader returned no image"))
 }
 
+/// Rendered at this multiple of the display size, so icons stay sharp on
+/// HiDPI screens; [`HiDpi`] reports the logical size to GTK.
+const OVERSAMPLE: i32 = 2;
+
 thread_local! {
-    static CACHE: RefCell<HashMap<(Icon, String, i32), gdk4::Texture>> = RefCell::new(HashMap::new());
+    static CACHE: RefCell<HashMap<(Icon, String, i32), gdk4::Paintable>> = RefCell::new(HashMap::new());
 }
 
-/// Texture of `icon` in `color` (a `#rrggbb` hex), for display at `px` pixels.
-pub fn texture(icon: Icon, color: &str, px: i32) -> Option<gdk4::Texture> {
+/// Paintable of `icon` in `color` (a `#rrggbb` hex) with a logical size of
+/// `px` × `px`.
+pub fn paintable(icon: Icon, color: &str, px: i32) -> Option<gdk4::Paintable> {
     let key = (icon, color.to_string(), px);
-    if let Some(t) = CACHE.with(|c| c.borrow().get(&key).cloned()) {
-        return Some(t);
+    if let Some(p) = CACHE.with(|c| c.borrow().get(&key).cloned()) {
+        return Some(p);
     }
-    match render_pixbuf(icon, color, px * 2) {
+    match render_pixbuf(icon, color, px * OVERSAMPLE) {
         Ok(pb) => {
-            #[allow(deprecated)] // for_pixbuf: fine for GTK 4.14 targets
+            #[allow(deprecated)] // Texture::for_pixbuf is fine on GTK 4.6–4.14
             let tex = gdk4::Texture::for_pixbuf(&pb);
-            CACHE.with(|c| c.borrow_mut().insert(key, tex.clone()));
-            Some(tex)
+            let p: gdk4::Paintable = HiDpi::new(tex, px).upcast();
+            CACHE.with(|c| c.borrow_mut().insert(key, p.clone()));
+            Some(p)
         }
         Err(e) => {
             tracing::warn!("[icons] cannot render {icon:?}: {e} (is librsvg2-common installed?)");
@@ -144,12 +152,75 @@ pub fn texture(icon: Icon, color: &str, px: i32) -> Option<gdk4::Texture> {
 
 /// A `gtk4::Image` showing `icon` at `px` pixels.
 pub fn image(icon: Icon, color: &str, px: i32) -> gtk4::Image {
-    let img = match texture(icon, color, px) {
-        Some(t) => gtk4::Image::from_paintable(Some(&t)),
+    let img = match paintable(icon, color, px) {
+        Some(p) => gtk4::Image::from_paintable(Some(&p)),
         None => gtk4::Image::new(),
     };
     img.set_pixel_size(px);
+    // GtkImage scales a paintable to its allocation; centring keeps the
+    // allocation at the natural (px × px) size.
+    img.set_halign(gtk4::Align::Center);
+    img.set_valign(gtk4::Align::Center);
     img
+}
+
+// ── HiDpi paintable ───────────────────────────────────────────────────────────
+
+glib::wrapper! {
+    /// A texture drawn at a smaller logical size than its pixel size.
+    pub struct HiDpi(ObjectSubclass<imp::HiDpi>) @implements gdk4::Paintable;
+}
+
+impl HiDpi {
+    fn new(texture: gdk4::Texture, logical_px: i32) -> Self {
+        let obj: Self = glib::Object::new();
+        let imp = obj.imp();
+        *imp.texture.borrow_mut() = Some(texture);
+        imp.size.set(logical_px);
+        obj
+    }
+}
+
+mod imp {
+    use std::cell::{Cell, RefCell};
+
+    use gdk4::prelude::*;
+    use gdk4::subclass::prelude::*;
+
+    #[derive(Default)]
+    pub struct HiDpi {
+        pub texture: RefCell<Option<gdk4::Texture>>,
+        pub size:    Cell<i32>,
+    }
+
+    #[glib::object_subclass]
+    impl ObjectSubclass for HiDpi {
+        const NAME: &'static str = "ClipboardManagerHiDpiIcon";
+        type Type = super::HiDpi;
+        type Interfaces = (gdk4::Paintable,);
+    }
+
+    impl ObjectImpl for HiDpi {}
+
+    impl PaintableImpl for HiDpi {
+        fn intrinsic_width(&self) -> i32 {
+            self.size.get()
+        }
+
+        fn intrinsic_height(&self) -> i32 {
+            self.size.get()
+        }
+
+        fn flags(&self) -> gdk4::PaintableFlags {
+            gdk4::PaintableFlags::SIZE | gdk4::PaintableFlags::CONTENTS
+        }
+
+        fn snapshot(&self, snapshot: &gdk4::Snapshot, width: f64, height: f64) {
+            if let Some(t) = self.texture.borrow().as_ref() {
+                t.snapshot(snapshot, width, height);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -21,7 +21,7 @@ fn default_font_time() -> u32 { 11 }
 fn default_font_title() -> u32 { 13 }
 fn default_font_buttons() -> u32 { 13 }
 fn default_font_undo() -> u32 { 12 }
-fn default_row_height() -> u32 { 44 }
+fn default_row_height() -> u32 { 56 }
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
 
@@ -84,7 +84,7 @@ pub struct SizeConfig {
     /// Undo bar text. Default: 12.
     #[serde(default = "default_font_undo")]
     pub font_undo: u32,
-    /// Minimum row height in px. Default: 44.
+    /// Minimum row height in px. Default: 56.
     #[serde(default = "default_row_height")]
     pub row_height: u32,
 }
@@ -162,6 +162,18 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
+    /// Write the commented default config to `path`. Errors (e.g. a
+    /// read-only filesystem) are logged, not fatal.
+    pub fn write_default(path: &std::path::Path) {
+        let result = path
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|_| std::fs::write(path, include_str!("../config/default.toml")));
+        if let Err(e) = result {
+            tracing::warn!("[config] cannot write {}: {e}", path.display());
+        }
+    }
+
     pub fn from_toml(text: &str) -> Result<Self> {
         Ok(toml::from_str(text)?)
     }
@@ -183,14 +195,7 @@ impl AppConfig {
             }
         } else {
             // Write a default config on first run so the user has a file to edit.
-            // Silently ignore write errors (e.g. read-only filesystem).
-            let _ = (|| -> std::io::Result<()> {
-                if let Some(dir) = path.parent() {
-                    std::fs::create_dir_all(dir)?;
-                }
-                std::fs::write(&path, include_str!("../config/default.toml"))?;
-                Ok(())
-            })();
+            Self::write_default(&path);
             (AppConfig::default(), None)
         }
     }

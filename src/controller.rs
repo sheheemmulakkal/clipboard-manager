@@ -11,7 +11,7 @@ use gdk4::prelude::*;
 
 use crate::clipboard::entry::{ClipboardContent, ClipboardEntry};
 use crate::config::AppConfig;
-use crate::events::{AppEvent, PopupEvent, RowAction};
+use crate::events::{AppEvent, MenuAction, PopupEvent, RowAction};
 use crate::platform::Platform;
 use crate::store::Store;
 use crate::ui::{filter, ClipboardPopup};
@@ -67,14 +67,32 @@ impl Controller {
                 self.refresh();
             }
             PopupEvent::ClearAll => self.clear_all(),
+            PopupEvent::Menu(action) => self.handle_menu(action),
+        }
+    }
+
+    fn handle_menu(&self, action: MenuAction) {
+        match action {
+            MenuAction::OpenSettings => {
+                self.popup.hide();
+                open_settings();
+            }
+            MenuAction::About => self.popup.show_about(),
+            MenuAction::Quit => self.popup.quit(),
         }
     }
 
     /// Rebuild the popup list from the store and the current search query.
     pub fn refresh(&self) {
         let all: Vec<ClipboardEntry> = self.store.borrow().get_all().into_iter().cloned().collect();
-        let entries = filter::visible(all, &self.query.borrow());
-        self.popup.populate(&entries);
+        let query = self.query.borrow();
+        let empty_text = if all.is_empty() {
+            "Nothing copied yet"
+        } else {
+            "No matches"
+        };
+        let entries = filter::visible(all, &query);
+        self.popup.populate(&entries, empty_text);
     }
 
     fn show(&self, prev_window: Option<u64>) {
@@ -191,6 +209,18 @@ impl Controller {
             },
             || tracing::debug!("[clear] committed"),
         );
+    }
+}
+
+/// Open config.toml in the user's default editor (creating it first).
+fn open_settings() {
+    let path = crate::paths::config_file();
+    if !path.exists() {
+        crate::config::AppConfig::write_default(&path);
+    }
+    let uri = gdk4::gio::File::for_path(&path).uri();
+    if let Err(e) = gdk4::gio::AppInfo::launch_default_for_uri(&uri, None::<&gdk4::gio::AppLaunchContext>) {
+        crate::notify::error("Cannot open settings", &format!("{}: {e}", path.display()));
     }
 }
 

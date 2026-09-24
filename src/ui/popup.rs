@@ -10,11 +10,16 @@ use gtk4::{
 };
 
 use crate::clipboard::entry::ClipboardEntry;
-use crate::config::{ColorConfig, SizeConfig};
-use crate::events::{PopupEvent, RowAction};
+use crate::config::{AppConfig, ThemeName};
+use crate::events::{MenuAction, PopupEvent, RowAction};
 use crate::platform::Platform;
+use crate::ui::icons::{self, Icon};
 use crate::ui::item_row::build_item_row;
 use crate::ui::style::generate_css;
+use crate::ui::theme::Theme;
+
+/// Space around the card for its drop shadow (only with a compositor).
+const SHADOW_MARGIN: i32 = 12;
 
 // ── Undo state ────────────────────────────────────────────────────────────────
 
@@ -55,86 +60,137 @@ pub struct ClipboardPopup {
     undo_pending:        Rc<RefCell<Option<UndoPending>>>,
     undo_tick:           Rc<RefCell<Option<glib::SourceId>>>,
     platform:            Arc<dyn Platform>,
-    nerd_font:           bool,
+    theme:               Rc<Theme>,
+    show_timestamps:     bool,
     search_entry:        SearchEntry,
     suppress_close:      Rc<Cell<u32>>,
+    size:                (i32, i32),
 }
 
 impl ClipboardPopup {
-    pub fn new(
-        app:       &Application,
-        platform:  Arc<dyn Platform>,
-        nerd_font: bool,
-        colors:    &ColorConfig,
-        sizes:     &SizeConfig,
-    ) -> Self {
+    pub fn new(app: &Application, platform: Arc<dyn Platform>, config: &AppConfig) -> Self {
+        let display = gdk4::Display::default().expect("no GDK display");
+        let composited = display.is_composited();
+
+        let mut theme = Theme::resolve(config.theme, &config.colors);
+
         let provider = CssProvider::new();
-        provider.load_from_data(&generate_css(colors, sizes));
+        provider.load_from_data(&generate_css(&theme, &config.sizes));
         gtk4::style_context_add_provider_for_display(
-            &gdk4::Display::default().expect("no GDK display"),
+            &display,
             &provider,
             gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );
+
+        let margin = if composited { SHADOW_MARGIN } else { 0 };
+        let size = (config.popup_width + 2 * margin, config.popup_height + 2 * margin);
 
         let window = Window::builder()
             .application(app)
             .decorated(false)
             .resizable(false)
             .title("Clipboard Manager")
-            .default_width(460)
-            .default_height(520)
+            .default_width(size.0)
+            .default_height(size.1)
             .build();
+        window.add_css_class("cm-popup");
+        if !composited {
+            window.add_css_class("no-compositing");
+        }
+
+        // SVG icons need a concrete colour; take it from the GTK theme.
+        if config.theme == ThemeName::System {
+            #[allow(deprecated)] // Widget::color() needs GTK 4.10; 22.04 ships 4.6
+            let fg = window.style_context().color();
+            theme.adopt_foreground(&rgba_hex(&fg));
+        }
+        let theme = Rc::new(theme);
 
         // ── Layout ────────────────────────────────────────────────────────────
-        let vbox = gtk4::Box::new(Orientation::Vertical, 0);
+        let card = gtk4::Box::new(Orientation::Vertical, 0);
+        card.add_css_class("popup-card");
+        card.set_overflow(gtk4::Overflow::Hidden);
 
+        // ── Header ────────────────────────────────────────────────────────────
         let handle = WindowHandle::new();
         handle.add_css_class("popup-header");
 
-        let header_row = gtk4::Box::new(Orientation::Horizontal, 0);
+        let header_row = gtk4::Box::new(Orientation::Horizontal, 4);
+
+        // A CenterBox keeps the icon centred in the fixed-size tile.
+        let app_icon = gtk4::CenterBox::new();
+        app_icon.add_css_class("app-icon");
+        let app_img = icons::image(Icon::FileText, &theme.icon, 20);
+        app_img.set_halign(gtk4::Align::Center);
+        app_img.set_valign(gtk4::Align::Center);
+        app_icon.set_halign(gtk4::Align::Start);
+        app_icon.set_valign(gtk4::Align::Center);
+        app_icon.set_center_widget(Some(&app_img));
+
         let title = Label::new(Some("Clipboard Manager"));
         title.add_css_class("popup-title");
         title.set_hexpand(true);
         title.set_halign(gtk4::Align::Start);
 
-        let clear_btn = Button::with_label("Clear All");
-        clear_btn.add_css_class("clear-btn");
-        clear_btn.set_valign(gtk4::Align::Center);
-        clear_btn.set_tooltip_text(Some("Remove all non-pinned items"));
-
-        header_row.append(&title);
-        header_row.append(&clear_btn);
-        handle.set_child(Some(&header_row));
-        vbox.append(&handle);
-
-        // ── Search bar ────────────────────────────────────────────────────────
-        let search_bar = gtk4::Box::new(Orientation::Horizontal, 6);
-        search_bar.add_css_class("search-bar");
-        search_bar.set_margin_start(10);
-        search_bar.set_margin_end(10);
-        search_bar.set_margin_top(6);
-        search_bar.set_margin_bottom(6);
-
-        let search_entry = SearchEntry::new();
-        search_entry.add_css_class("search-entry");
-        search_entry.set_placeholder_text(Some("Search\u{2026}"));
-        search_entry.set_hexpand(true);
-
-        let esc_hint = Label::new(Some("Esc to clear"));
-        esc_hint.add_css_class("search-hint");
-        esc_hint.set_visible(false);
-
+        let keep_open = Rc::new(Cell::new(false));
+        let pin_btn = icon_button(Icon::Pin, &theme.icon_muted, 18, "header-btn");
+        pin_btn.set_tooltip_text(Some("Keep open"));
         {
-            let hint = esc_hint.clone();
-            search_entry.connect_changed(move |se| {
-                hint.set_visible(!se.text().is_empty());
+            let keep_open = Rc::clone(&keep_open);
+            let theme = Rc::clone(&theme);
+            pin_btn.connect_clicked(move |b| {
+                let on = !keep_open.get();
+                keep_open.set(on);
+                let (icon, color) = if on {
+                    (Icon::PinFilled, theme.accent_icon())
+                } else {
+                    (Icon::Pin, theme.icon_muted.clone())
+                };
+                b.set_child(Some(&icons::image(icon, &color, 18)));
+                b.set_tooltip_text(Some(if on { "Keep open: on" } else { "Keep open" }));
             });
         }
 
-        search_bar.append(&search_entry);
-        search_bar.append(&esc_hint);
-        vbox.append(&search_bar);
+        let suppress_close: Rc<Cell<u32>> = Rc::new(Cell::new(0));
+        let handler = EventHandler::default();
 
+        let menu_btn = icon_button(Icon::Menu, &theme.icon_muted, 18, "header-btn");
+        menu_btn.set_tooltip_text(Some("Menu"));
+        {
+            let menu = build_header_menu(&theme, &handler, &suppress_close);
+            menu.set_parent(&menu_btn);
+            menu_btn.connect_clicked(move |_| menu.popup());
+        }
+
+        let close_btn = icon_button(Icon::X, &theme.icon, 16, "close-btn");
+        close_btn.set_tooltip_text(Some("Close (Esc)"));
+
+        header_row.append(&app_icon);
+        header_row.append(&title);
+        header_row.append(&pin_btn);
+        header_row.append(&menu_btn);
+        header_row.append(&close_btn);
+        handle.set_child(Some(&header_row));
+        card.append(&handle);
+
+        // ── Search box ────────────────────────────────────────────────────────
+        let search_box = gtk4::Box::new(Orientation::Horizontal, 6);
+        search_box.add_css_class("search-box");
+
+        let search_entry = SearchEntry::new();
+        search_entry.add_css_class("search-entry");
+        search_entry.set_placeholder_text(Some("Search clipboard\u{2026}"));
+        search_entry.set_hexpand(true);
+
+        let kbd_chip = Label::new(Some("Ctrl + K"));
+        kbd_chip.add_css_class("kbd-chip");
+        kbd_chip.set_valign(gtk4::Align::Center);
+
+        search_box.append(&search_entry);
+        search_box.append(&kbd_chip);
+        card.append(&search_box);
+
+        // ── List ──────────────────────────────────────────────────────────────
         let scrolled = ScrolledWindow::builder()
             .hscrollbar_policy(gtk4::PolicyType::Never)
             .vscrollbar_policy(gtk4::PolicyType::Automatic)
@@ -142,26 +198,26 @@ impl ClipboardPopup {
             .build();
 
         let list_box = ListBox::new();
+        list_box.add_css_class("history");
         list_box.set_selection_mode(SelectionMode::Single);
         scrolled.set_child(Some(&list_box));
 
-        // ── Scroll-to-top button (floats over the list) ───────────────────────
+        // Scroll-to-top button (floats over the list).
         let list_overlay = gtk4::Overlay::new();
         list_overlay.set_child(Some(&scrolled));
-        let scroll_top_btn = Button::with_label("\u{2191}");
-        scroll_top_btn.add_css_class("scroll-top-btn");
+        let scroll_top_btn = icon_button(Icon::ArrowUp, "#ffffff", 18, "scroll-top-btn");
         scroll_top_btn.set_tooltip_text(Some("Scroll to top (Home)"));
         scroll_top_btn.set_halign(gtk4::Align::End);
         scroll_top_btn.set_valign(gtk4::Align::End);
-        scroll_top_btn.set_margin_end(14);
-        scroll_top_btn.set_margin_bottom(14);
+        scroll_top_btn.set_margin_end(16);
+        scroll_top_btn.set_margin_bottom(16);
         scroll_top_btn.set_visible(false);
         list_overlay.add_overlay(&scroll_top_btn);
-        vbox.append(&list_overlay);
+        card.append(&list_overlay);
 
         {
             let btn = scroll_top_btn.clone();
-            let row_height = sizes.row_height;
+            let row_height = config.sizes.row_height;
             scrolled.vadjustment().connect_value_changed(move |adj| {
                 btn.set_visible(scroll_top_visible(adj.value(), row_height));
             });
@@ -190,16 +246,14 @@ impl ClipboardPopup {
         undo_bar.append(&undo_label);
         undo_bar.append(&undo_btn);
         undo_bar.set_visible(false);
-        vbox.append(&undo_bar);
+        card.append(&undo_bar);
 
-        window.set_child(Some(&vbox));
+        window.set_child(Some(&card));
 
         // ── Shared state ──────────────────────────────────────────────────────
-        let row_ids:            Rc<RefCell<Vec<u64>>>                        = Rc::new(RefCell::new(vec![]));
-        let handler:            EventHandler                                 = EventHandler::default();
-        let undo_pending:       Rc<RefCell<Option<UndoPending>>>             = Rc::new(RefCell::new(None));
-        let undo_tick:          Rc<RefCell<Option<glib::SourceId>>>          = Rc::new(RefCell::new(None));
-        let suppress_close:     Rc<Cell<u32>>                                = Rc::new(Cell::new(0));
+        let row_ids:      Rc<RefCell<Vec<u64>>>               = Rc::new(RefCell::new(vec![]));
+        let undo_pending: Rc<RefCell<Option<UndoPending>>>    = Rc::new(RefCell::new(None));
+        let undo_tick:    Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
 
         // ── Drag tracking ─────────────────────────────────────────────────────
         //
@@ -234,10 +288,10 @@ impl ClipboardPopup {
             window.add_controller(gc);
         }
 
-        // ── Wire: Clear All ───────────────────────────────────────────────────
+        // ── Wire: close button ────────────────────────────────────────────────
         {
-            let h = handler.clone();
-            clear_btn.connect_clicked(move |_| h.emit(PopupEvent::ClearAll));
+            let win = window.clone();
+            close_btn.connect_clicked(move |_| win.set_visible(false));
         }
 
         // ── Wire: search ──────────────────────────────────────────────────────
@@ -272,14 +326,35 @@ impl ClipboardPopup {
             let h       = handler.clone();
             let se      = search_entry.clone();
 
-            key_ctrl.connect_key_pressed(move |_, key, _, _| {
+            key_ctrl.connect_key_pressed(move |_, key, _, mods| {
                 use glib::Propagation;
+                let ctrl = mods.contains(gdk4::ModifierType::CONTROL_MASK);
+                let in_search = has_focus_within(&se);
                 match key {
                     k if k == gdk4::Key::Escape => {
                         if !se.text().is_empty() {
                             se.set_text("");
                         } else {
                             win_ref.set_visible(false);
+                        }
+                        Propagation::Stop
+                    }
+                    k if (ctrl && (k == gdk4::Key::k || k == gdk4::Key::f))
+                        || (k == gdk4::Key::slash && !in_search) =>
+                    {
+                        se.grab_focus();
+                        se.select_region(0, -1);
+                        Propagation::Stop
+                    }
+                    k if (k == gdk4::Key::Home || k == gdk4::Key::End) && !in_search => {
+                        let target = if k == gdk4::Key::Home {
+                            lb.row_at_index(0)
+                        } else {
+                            last_row(&lb)
+                        };
+                        if let Some(row) = target {
+                            lb.select_row(Some(&row));
+                            row.grab_focus();
                         }
                         Propagation::Stop
                     }
@@ -292,23 +367,10 @@ impl ClipboardPopup {
                         }
                         Propagation::Stop
                     }
-                    k if (k == gdk4::Key::Home || k == gdk4::Key::End) && !has_focus_within(&se) => {
-                        let target = if k == gdk4::Key::Home {
-                            lb.row_at_index(0)
-                        } else {
-                            last_row(&lb)
-                        };
-                        if let Some(row) = target {
-                            lb.select_row(Some(&row));
-                            row.grab_focus();
-                        }
-                        Propagation::Stop
-                    }
                     k if k == gdk4::Key::Down => {
-                        // When search entry has focus, Down always jumps to the
-                        // first list item (row 0) rather than advancing from the
-                        // currently selected row, which would skip row 0.
-                        let next = if has_focus_within(&se) {
+                        // From the search entry, Down goes to the first row
+                        // (which is pre-selected) instead of skipping it.
+                        let next = if in_search {
                             0
                         } else {
                             lb.selected_row().map(|r| r.index() + 1).unwrap_or(0)
@@ -341,6 +403,7 @@ impl ClipboardPopup {
             let bar  = undo_bar.clone();
             let dh   = Rc::clone(&drag_held);
             let sc   = Rc::clone(&suppress_close);
+            let ko   = Rc::clone(&keep_open);
             let poll: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
             let poll_outer = Rc::clone(&poll);
             let platform_dh = Arc::clone(&platform);
@@ -353,8 +416,8 @@ impl ClipboardPopup {
                     return;
                 }
 
-                // A child popover (label editor) is open — don't close the popup.
-                if sc.get() > 0 { return; }
+                // A popover (menu, editor) is open, or "keep open" is on.
+                if sc.get() > 0 || ko.get() { return; }
 
                 if dh.get() {
                     let win_c    = win.clone();
@@ -422,7 +485,8 @@ impl ClipboardPopup {
         Self {
             window, scrolled, list_box, row_ids, handler,
             undo_bar, undo_label, undo_pending, undo_tick,
-            platform, nerd_font, search_entry, suppress_close,
+            platform, theme, show_timestamps: config.show_timestamps,
+            search_entry, suppress_close, size,
         }
     }
 
@@ -433,7 +497,8 @@ impl ClipboardPopup {
 
     // ── populate ──────────────────────────────────────────────────────────────
 
-    pub fn populate(&self, entries: &[ClipboardEntry]) {
+    /// Rebuild the list. `empty_text` is shown when `entries` is empty.
+    pub fn populate(&self, entries: &[ClipboardEntry], empty_text: &str) {
         // If the popup is already visible this is a mutation repopulate (delete/pin/label).
         // Save the scroll position so we can restore it after rebuilding the list.
         let is_repopulate = self.window.is_visible();
@@ -454,7 +519,7 @@ impl ClipboardPopup {
             ids.push(entry.id);
             let id = entry.id;
             let h  = self.handler.clone();
-            let row = build_item_row(entry, self.nerd_font, Rc::clone(&self.suppress_close), move |action| {
+            let row = build_item_row(entry, false, Rc::clone(&self.suppress_close), move |action| {
                 h.emit(PopupEvent::Row(id, action));
             });
             self.list_box.append(&row);
@@ -463,10 +528,10 @@ impl ClipboardPopup {
 
         if entries.is_empty() {
             let row   = gtk4::ListBoxRow::new();
-            let label = Label::new(Some("No matches"));
+            let label = Label::new(Some(empty_text));
             label.add_css_class("empty-label");
-            label.set_margin_top(16);
-            label.set_margin_bottom(16);
+            label.set_margin_top(32);
+            label.set_margin_bottom(32);
             row.set_activatable(false);
             row.set_selectable(false);
             row.set_child(Some(&label));
@@ -549,11 +614,12 @@ impl ClipboardPopup {
         let se       = self.search_entry.clone();
         let win      = self.window.clone();
         let platform = Arc::clone(&self.platform);
+        let size     = self.size;
 
         glib::timeout_add_local_once(Duration::from_millis(50), move || {
             se.grab_focus();
             if let Some((cx, cy)) = cursor {
-                move_window_near_cursor(&win, &*platform, cx, cy);
+                move_window_near_cursor(&win, &*platform, size, cx, cy);
             }
         });
     }
@@ -573,6 +639,125 @@ impl ClipboardPopup {
     pub fn hide(&self) {
         self.window.set_visible(false);
     }
+
+    pub fn show_about(&self) {
+        let about = gtk4::AboutDialog::builder()
+            .transient_for(&self.window)
+            .modal(true)
+            .program_name("Clipboard Manager")
+            .version(env!("CARGO_PKG_VERSION"))
+            .comments("Clipboard history for Linux")
+            .website(env!("CARGO_PKG_HOMEPAGE"))
+            .license_type(gtk4::License::MitX11)
+            .logo_icon_name("edit-paste")
+            .build();
+        // The dialog takes focus from the popup; don't treat that as "close".
+        self.suppress_close.set(self.suppress_close.get() + 1);
+        let sc = Rc::clone(&self.suppress_close);
+        about.connect_close_request(move |_| {
+            sc.set(sc.get().saturating_sub(1));
+            glib::Propagation::Proceed
+        });
+        about.present();
+    }
+
+    pub fn quit(&self) {
+        if let Some(app) = self.window.application() {
+            app.quit();
+        }
+    }
+}
+
+// ── Header menu ───────────────────────────────────────────────────────────────
+
+fn build_header_menu(theme: &Theme, handler: &EventHandler, suppress: &Rc<Cell<u32>>) -> gtk4::Popover {
+    let popover = gtk4::Popover::new();
+    popover.add_css_class("cm-menu");
+    popover.set_has_arrow(false);
+    popover.set_position(gtk4::PositionType::Bottom);
+
+    let vbox = gtk4::Box::new(Orientation::Vertical, 0);
+    let items: [(Icon, &str, fn() -> PopupEvent); 4] = [
+        (Icon::Trash,     "Clear history", || PopupEvent::ClearAll),
+        (Icon::Settings,  "Settings",      || PopupEvent::Menu(MenuAction::OpenSettings)),
+        (Icon::Clipboard, "About",         || PopupEvent::Menu(MenuAction::About)),
+        (Icon::Power,     "Quit",          || PopupEvent::Menu(MenuAction::Quit)),
+    ];
+    for (i, (icon, label, event)) in items.into_iter().enumerate() {
+        if i == 1 {
+            vbox.append(&menu_separator());
+        }
+        let btn = menu_item(icon, label, None, &theme.icon_muted);
+        let h = handler.clone();
+        let p = popover.clone();
+        btn.connect_clicked(move |_| {
+            p.popdown();
+            h.emit(event());
+        });
+        vbox.append(&btn);
+    }
+    popover.set_child(Some(&vbox));
+    track_popover(&popover, suppress);
+    popover
+}
+
+/// A flat menu row: `[icon] label ……… accel`.
+pub fn menu_item(icon: Icon, label: &str, accel: Option<&str>, icon_color: &str) -> Button {
+    let row = gtk4::Box::new(Orientation::Horizontal, 10);
+    row.append(&icons::image(icon, icon_color, 16));
+    let l = Label::new(Some(label));
+    l.add_css_class("menu-label");
+    l.set_hexpand(true);
+    l.set_halign(gtk4::Align::Start);
+    row.append(&l);
+    if let Some(a) = accel {
+        let al = Label::new(Some(a));
+        al.add_css_class("menu-accel");
+        row.append(&al);
+    }
+    let btn = Button::new();
+    btn.add_css_class("menu-item");
+    btn.set_child(Some(&row));
+    btn
+}
+
+pub fn menu_separator() -> gtk4::Separator {
+    let sep = gtk4::Separator::new(Orientation::Horizontal);
+    sep.add_css_class("menu-sep");
+    sep
+}
+
+/// Keep the popup open while `popover` is shown: the popover takes focus,
+/// which would otherwise look like the popup losing focus.
+pub fn track_popover(popover: &gtk4::Popover, suppress: &Rc<Cell<u32>>) {
+    {
+        let sc = Rc::clone(suppress);
+        popover.connect_show(move |_| sc.set(sc.get() + 1));
+    }
+    {
+        // Decrement one idle tick later so a focus-out that arrives while the
+        // popover is closing (or when another popover opens right after)
+        // never sees the counter at 0.
+        let sc = Rc::clone(suppress);
+        popover.connect_closed(move |_| {
+            let sc = Rc::clone(&sc);
+            glib::idle_add_local_once(move || sc.set(sc.get().saturating_sub(1)));
+        });
+    }
+}
+
+/// Button whose only content is an icon.
+fn icon_button(icon: Icon, color: &str, px: i32, class: &str) -> Button {
+    let b = Button::new();
+    b.add_css_class(class);
+    b.set_child(Some(&icons::image(icon, color, px)));
+    b.set_valign(gtk4::Align::Center);
+    b
+}
+
+fn rgba_hex(c: &gdk4::RGBA) -> String {
+    let to = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    format!("#{:02x}{:02x}{:02x}", to(c.red()), to(c.green()), to(c.blue()))
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -640,9 +825,8 @@ fn cancel_tick(ut: &Rc<RefCell<Option<glib::SourceId>>>) {
 }
 
 /// Clamp and move the popup near the cursor, using the platform backend.
-fn move_window_near_cursor(win: &Window, platform: &dyn Platform, cx: i32, cy: i32) {
-    let w: i32 = 460;
-    let h: i32 = 520;
+fn move_window_near_cursor(win: &Window, platform: &dyn Platform, size: (i32, i32), cx: i32, cy: i32) {
+    let (w, h) = size;
     let (sw, sh) = crate::platform::x11::screen_dimensions().unwrap_or((1920, 1080));
     let mut x = cx + 4;
     let mut y = cy + 4;
@@ -670,5 +854,10 @@ mod tests {
         assert!(!scroll_top_visible(0.0, 44));
         assert!(!scroll_top_visible(44.0, 44));
         assert!(scroll_top_visible(45.0, 44));
+    }
+
+    #[test]
+    fn rgba_to_hex() {
+        assert_eq!(rgba_hex(&gdk4::RGBA::new(1.0, 0.5, 0.0, 1.0)), "#ff8000");
     }
 }

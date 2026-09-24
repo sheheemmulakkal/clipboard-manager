@@ -29,4 +29,13 @@ pub enum PopupEvent {
     Row(u64, RowAction),
     SearchChanged(String),
     ClearAll,
+    Menu(MenuAction),
+}
+
+/// Items of the popup's ☰ menu (and later the tray menu).
+#[derive(Clone, Copy, Debug)]
+pub enum MenuAction {
+    OpenSettings,
+    About,
+    Quit,
 }
