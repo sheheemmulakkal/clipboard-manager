@@ -16,6 +16,7 @@ use crate::events::RowAction;
 use crate::ui::context_menu;
 use crate::ui::editor;
 use crate::ui::format;
+use crate::ui::preview;
 use crate::ui::icons::{self, Icon};
 use crate::ui::theme::{normalize_color, tag_color, Theme};
 
@@ -51,6 +52,8 @@ pub struct RowHooks {
     pub open_editor: Rc<dyn Fn()>,
     /// Show the quick-paste number instead of the colour dot (Alt held).
     pub show_quick_index: Rc<dyn Fn(bool)>,
+    /// Open the full preview (Space).
+    pub open_preview: Rc<dyn Fn()>,
 }
 
 /// Kind of an entry, including images/screenshots.
@@ -174,6 +177,8 @@ pub fn build_item_row(
 
     let actions = gtk4::Box::new(Orientation::Horizontal, 2);
     actions.set_halign(gtk4::Align::End);
+    let preview_btn = row_button(Icon::Eye, &theme.icon_muted, "Preview (Space)");
+    actions.append(&preview_btn);
     let copy_btn = row_button(Icon::Copy, &theme.icon_muted, "Copy (Ctrl+C)");
     actions.append(&copy_btn);
     let term_btn = row_button(Icon::Terminal, &theme.icon_muted, "Paste to terminal (Ctrl+Shift+V)");
@@ -222,6 +227,18 @@ pub fn build_item_row(
     connect(&del_btn, &on_action, RowAction::Remove);
     connect(&pin_btn, &on_action, RowAction::TogglePin);
 
+    let open_preview: Rc<dyn Fn()> = {
+        let row      = row.clone();
+        let entry    = entry.clone();
+        let suppress = Rc::clone(&ctx.suppress_close);
+        let cb       = Rc::clone(&on_action);
+        Rc::new(move || preview::show(&row, &entry, &suppress, Rc::clone(&cb)))
+    };
+    {
+        let open = Rc::clone(&open_preview);
+        preview_btn.connect_clicked(move |_| open());
+    }
+
     let open_editor: Rc<dyn Fn()> = {
         let row      = row.clone();
         let entry    = entry.clone();
@@ -238,9 +255,12 @@ pub fn build_item_row(
         let tags     = Rc::clone(&ctx.tags);
         let suppress = Rc::clone(&ctx.suppress_close);
         let cb       = Rc::clone(&on_action);
-        let edit     = Rc::clone(&open_editor);
+        let ui = context_menu::UiHooks {
+            edit:    Rc::clone(&open_editor),
+            preview: Rc::clone(&open_preview),
+        };
         Rc::new(move |point| {
-            context_menu::show(&row, point, &entry, &theme, &tags, &suppress, Rc::clone(&cb), Rc::clone(&edit));
+            context_menu::show(&row, point, &entry, &theme, &tags, &suppress, Rc::clone(&cb), ui.clone());
         })
     };
     {
@@ -255,7 +275,7 @@ pub fn build_item_row(
     }
     let open_menu: Rc<dyn Fn()> = Rc::new(move || open_menu_at(None));
 
-    ItemRow { row, hooks: RowHooks { open_menu, open_editor, show_quick_index } }
+    ItemRow { row, hooks: RowHooks { open_menu, open_editor, show_quick_index, open_preview } }
 }
 
 fn row_button(icon: Icon, color: &str, tooltip: &str) -> Button {

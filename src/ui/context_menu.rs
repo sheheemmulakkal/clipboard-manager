@@ -41,7 +41,7 @@ pub fn show(
     tags:     &[String],
     suppress: &Rc<Cell<u32>>,
     emit:     Rc<dyn Fn(RowAction)>,
-    on_edit:  Rc<dyn Fn()>,
+    ui:       UiHooks,
 ) {
     let popover = Popover::new();
     popover.add_css_class("cm-menu");
@@ -62,12 +62,13 @@ pub fn show(
             let choice = pending.borrow_mut().take();
             let p = p.clone();
             let emit = Rc::clone(&emit);
-            let on_edit = Rc::clone(&on_edit);
+            let ui = ui.clone();
             glib::idle_add_local_once(move || {
                 p.unparent();
                 match choice {
                     Some(Choice::Action(a)) => emit(a),
-                    Some(Choice::Edit) => on_edit(),
+                    Some(Choice::Edit) => (ui.edit)(),
+                    Some(Choice::Preview) => (ui.preview)(),
                     None => {}
                 }
             });
@@ -98,12 +99,19 @@ pub fn show(
     popover.popup();
 }
 
+/// Popovers the menu can open (UI actions, not store changes).
+#[derive(Clone)]
+pub struct UiHooks {
+    pub edit:    Rc<dyn Fn()>,
+    pub preview: Rc<dyn Fn()>,
+}
+
 /// What the user picked in the menu.
 #[derive(Clone)]
 enum Choice {
     Action(RowAction),
-    /// Open the editor (a UI action, not a store change).
     Edit,
+    Preview,
 }
 
 fn meta(entry: &ClipboardEntry) -> EntryMeta {
@@ -135,6 +143,12 @@ fn main_page(entry: &ClipboardEntry, theme: &Theme, stack: &Stack, choose: &Rc<d
     if !entry.is_image() {
         page.append(&item(Icon::Terminal, "Paste to terminal", None, RowAction::PasteTerminal));
     }
+    let preview = menu_item(Icon::Eye, "Preview", Some("Space"), ic);
+    {
+        let choose = Rc::clone(choose);
+        preview.connect_clicked(move |_| choose(Choice::Preview));
+    }
+    page.append(&preview);
     page.append(&menu_separator());
     let del = menu_item(Icon::Trash, "Delete", Some("Delete"), &theme.danger_icon());
     del.add_css_class("danger");

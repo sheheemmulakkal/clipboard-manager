@@ -35,6 +35,61 @@ pub fn title(e: &ClipboardEntry, kind: ContentKind) -> String {
     }
 }
 
+/// "1,234" — thousands separators for counts shown to the user.
+fn group_thousands(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+fn human_size(bytes: u64) -> String {
+    match bytes {
+        b if b >= 1024 * 1024 => format!("{:.1} MB", b as f64 / (1024.0 * 1024.0)),
+        b if b >= 1024 => format!("{} KB", b / 1024),
+        b => format!("{b} B"),
+    }
+}
+
+/// Header line of the preview popover.
+pub fn preview_header(e: &ClipboardEntry, file_size: Option<u64>) -> String {
+    match &e.content {
+        ClipboardContent::Text(t) => {
+            let chars = t.chars().count();
+            let lines = t.lines().count().max(1);
+            format!(
+                "Text \u{00b7} {} characters \u{00b7} {} {}",
+                group_thousands(chars),
+                group_thousands(lines),
+                if lines == 1 { "line" } else { "lines" }
+            )
+        }
+        ClipboardContent::Image { width, height, .. } => {
+            let mut s = format!("Image \u{00b7} {width} \u{00d7} {height} \u{00b7} PNG");
+            if let Some(size) = file_size {
+                s.push_str(&format!(" \u{00b7} {}", human_size(size)));
+            }
+            s
+        }
+    }
+}
+
+/// Text for the preview (at most `max_chars`) and a note about the rest.
+pub fn preview_body(text: &str, max_chars: usize) -> (String, Option<String>) {
+    let total = text.chars().count();
+    if total <= max_chars {
+        return (text.to_string(), None);
+    }
+    let body: String = text.chars().take(max_chars).collect();
+    let note = format!("\u{2026} {} more characters", group_thousands(total - max_chars));
+    (body, Some(note))
+}
+
 /// Second line of a row: a one-line preview, or image dimensions.
 pub fn subtitle(e: &ClipboardEntry) -> String {
     match &e.content {
@@ -102,6 +157,28 @@ mod tests {
         assert_eq!(title(&e, ContentKind::Url), "Docs");
         e.label = Some("  ".into());
         assert_eq!(title(&e, ContentKind::Url), "URL");
+    }
+
+    #[test]
+    fn preview_header_describes_text_and_images() {
+        let t = ClipboardEntry::new_text(1, "a\nb\nc".into());
+        assert_eq!(preview_header(&t, None), "Text \u{00b7} 5 characters \u{00b7} 3 lines");
+        let big = ClipboardEntry::new_text(2, "x".repeat(1234));
+        assert_eq!(preview_header(&big, None), "Text \u{00b7} 1,234 characters \u{00b7} 1 line");
+        let img = ClipboardEntry::new_image(3, [0; 32], 1920, 1080);
+        assert_eq!(
+            preview_header(&img, Some(1_258_291)),
+            "Image \u{00b7} 1920 \u{00d7} 1080 \u{00b7} PNG \u{00b7} 1.2 MB"
+        );
+    }
+
+    #[test]
+    fn preview_body_is_truncated_with_a_note() {
+        let (body, note) = preview_body("short", 10);
+        assert_eq!((body.as_str(), note), ("short", None));
+        let (body, note) = preview_body(&"y".repeat(25), 10);
+        assert_eq!(body.chars().count(), 10);
+        assert_eq!(note.as_deref(), Some("\u{2026} 15 more characters"));
     }
 
     #[test]

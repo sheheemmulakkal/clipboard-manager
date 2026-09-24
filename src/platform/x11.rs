@@ -125,15 +125,6 @@ impl Platform for X11Platform {
     }
 }
 
-// ── screen_dimensions (used by popup.rs for coordinate clamping) ──────────────
-
-/// Return the primary screen dimensions in pixels.
-pub fn screen_dimensions() -> Option<(i32, i32)> {
-    let (conn, sn) = RustConnection::connect(None).ok()?;
-    let screen = &conn.setup().roots[sn];
-    Some((screen.width_in_pixels as i32, screen.height_in_pixels as i32))
-}
-
 // ── clipboard TARGETS query ───────────────────────────────────────────────────
 
 /// Ask the CLIPBOARD owner for its TARGETS list. Waits at most 200 ms for an

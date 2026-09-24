@@ -380,6 +380,13 @@ impl ClipboardPopup {
                         }
                         Propagation::Stop
                     }
+                    k if k == gdk4::Key::space && !in_search => {
+                        let hook = selected().and_then(|i| hooks.borrow().get(i).cloned());
+                        if let Some(hook) = hook {
+                            (hook.open_preview)();
+                        }
+                        Propagation::Stop
+                    }
                     k if ctrl && k == gdk4::Key::e => {
                         let hook = selected().and_then(|i| hooks.borrow().get(i).cloned());
                         if let Some(hook) = hook {
@@ -704,11 +711,11 @@ impl ClipboardPopup {
         let platform = Arc::clone(&self.platform);
         let size     = self.size;
 
+        if let Some(c) = cursor {
+            move_window_near_cursor(&win, &platform, size, c);
+        }
         glib::timeout_add_local_once(Duration::from_millis(50), move || {
             se.grab_focus();
-            if let Some((cx, cy)) = cursor {
-                move_window_near_cursor(&win, &*platform, size, cx, cy);
-            }
         });
     }
 
@@ -980,17 +987,102 @@ fn cancel_tick(ut: &Rc<RefCell<Option<glib::SourceId>>>) {
     if let Some(id) = ut.borrow_mut().take() { id.remove(); }
 }
 
-/// Clamp and move the popup near the cursor, using the platform backend.
-fn move_window_near_cursor(win: &Window, platform: &dyn Platform, size: (i32, i32), cx: i32, cy: i32) {
+/// Top-left position for a `size` window opened at the cursor, kept 8 px
+/// inside `area` (x, y, width, height of the monitor's work area).
+fn place_near_cursor(cursor: (i32, i32), size: (i32, i32), area: (i32, i32, i32, i32)) -> (i32, i32) {
+    const GAP: i32 = 8;
+    let (cx, cy) = cursor;
     let (w, h) = size;
-    let (sw, sh) = crate::platform::x11::screen_dimensions().unwrap_or((1920, 1080));
+    let (ax, ay, aw, ah) = area;
     let mut x = cx + 4;
     let mut y = cy + 4;
-    if x + w > sw { x = sw - w - 8; }
-    if y + h > sh { y = sh - h - 8; }
-    if x < 0 { x = 4; }
-    if y < 0 { y = 4; }
-    platform.move_popup(win, x, y);
+    if x + w > ax + aw - GAP { x = ax + aw - w - GAP; }
+    if y + h > ay + ah - GAP { y = ay + ah - h - GAP; }
+    if x < ax + GAP { x = ax + GAP; }
+    if y < ay + GAP { y = ay + GAP; }
+    (x, y)
+}
+
+/// Work area (device pixels) of the monitor containing `point`.
+fn monitor_area(display: &gdk4::Display, point: (i32, i32)) -> Option<(i32, i32, i32, i32)> {
+    let monitors = display.monitors();
+    let areas: Vec<(i32, i32, i32, i32)> = (0..monitors.n_items())
+        .filter_map(|i| monitors.item(i).and_downcast::<gdk4::Monitor>())
+        .map(|m| {
+            let s = m.scale_factor().max(1);
+            // Work area excludes panels and docks on X11.
+            let r = m
+                .downcast_ref::<gdk4_x11::X11Monitor>()
+                .map(|x| x.workarea())
+                .unwrap_or_else(|| m.geometry());
+            (r.x() * s, r.y() * s, r.width() * s, r.height() * s)
+        })
+        .collect();
+    let (px, py) = point;
+    areas
+        .iter()
+        .find(|(x, y, w, h)| px >= *x && px < x + w && py >= *y && py < y + h)
+        .or(areas.first())
+        .copied()
+}
+
+/// Move the popup near the cursor once it has been painted: the window
+/// manager places a new window itself when it first shows it (Mutter waits
+/// for the first frame), overriding any earlier move.
+fn move_window_near_cursor(win: &Window, platform: &Arc<dyn Platform>, size: (i32, i32), cursor: (i32, i32)) {
+    let area = monitor_area(&WidgetExt::display(win), cursor).unwrap_or((0, 0, 1920, 1080));
+    let (x, y) = place_near_cursor(cursor, size, area);
+    tracing::debug!("[popup] cursor={cursor:?} area={area:?} → ({x},{y})");
+
+    let move_now = {
+        let win = win.clone();
+        let platform = Arc::clone(platform);
+        move || {
+            // The move goes over a separate X connection: sync GTK's first
+            // so its own requests reach the window manager before ours.
+            WidgetExt::display(&win).sync();
+            platform.move_popup(&win, x, y);
+        }
+    };
+
+    let move_now = Rc::new(move_now);
+
+    // Once the window manager has shown and focused the window, its own
+    // placement is done: move (again) then.
+    {
+        let move_now = Rc::clone(&move_now);
+        let handler: Rc<RefCell<Option<glib::SignalHandlerId>>> = Rc::new(RefCell::new(None));
+        let h = Rc::clone(&handler);
+        let id = win.connect_is_active_notify(move |w| {
+            if w.is_active() {
+                move_now();
+                if let Some(id) = h.borrow_mut().take() {
+                    w.disconnect(id);
+                }
+            }
+        });
+        *handler.borrow_mut() = Some(id);
+    }
+
+    let Some(clock) = win.frame_clock() else {
+        move_now();
+        return;
+    };
+    // Re-open of an already-shown window: move right away as well.
+    if win.surface().is_some_and(|s| s.is_mapped()) {
+        move_now();
+    }
+    let handler: Rc<RefCell<Option<glib::SignalHandlerId>>> = Rc::new(RefCell::new(None));
+    let id = {
+        let handler = Rc::clone(&handler);
+        clock.connect_after_paint(move |clock| {
+            move_now();
+            if let Some(id) = handler.borrow_mut().take() {
+                clock.disconnect(id);
+            }
+        })
+    };
+    *handler.borrow_mut() = Some(id);
 }
 
 #[cfg(test)]
@@ -1031,6 +1123,20 @@ mod tests {
         assert_eq!(quick_index(Key::_4, false, true), None);
         assert_eq!(quick_index(Key::_0, true, false), None);
         assert_eq!(quick_index(Key::a, true, false), None);
+    }
+
+    #[test]
+    fn placement_stays_inside_the_monitor_area() {
+        let area = (0, 32, 1280, 768); // x, y, width, height (below a top bar)
+        // Room below-right of the cursor: open there.
+        assert_eq!(place_near_cursor((100, 100), (464, 584), area), (104, 104));
+        // Near the bottom-right corner: shifted up/left, fully inside.
+        assert_eq!(place_near_cursor((1200, 700), (464, 584), area), (1280 - 464 - 8, 800 - 584 - 8));
+        // Above the top bar: pushed below it.
+        assert_eq!(place_near_cursor((100, 0), (464, 584), area), (104, 40));
+        // Second monitor to the right.
+        let right = (1280, 0, 1920, 1080);
+        assert_eq!(place_near_cursor((1300, 50), (464, 584), right), (1304, 54));
     }
 
     #[test]
