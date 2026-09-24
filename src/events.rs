@@ -9,9 +9,15 @@ use crate::clipboard::entry::EntryMeta;
 pub enum AppEvent {
     /// Open the popup; `prev_window` is the X11 window focused before it.
     Show { prev_window: Option<u64> },
+    /// Show the popup if hidden, hide it if shown (tray click).
+    Toggle { prev_window: Option<u64> },
     /// Pause (`Some(true)`), resume (`Some(false)`) or toggle (`None`) capture.
     SetPaused(Option<bool>),
+    OpenSettings,
+    Quit,
 }
+
+pub type AppSender = async_channel::Sender<AppEvent>;
 
 /// Something the user did to one history row.
 #[derive(Clone, Debug)]

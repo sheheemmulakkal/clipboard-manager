@@ -150,6 +150,13 @@ impl App {
                 ),
             }
 
+            // ── Tray icon ─────────────────────────────────────────────────
+            if config.tray_icon {
+                if let Some(handle) = crate::tray::spawn(tx.clone(), &config.hotkey) {
+                    controller.on_pause_changed(move |p| crate::tray::set_paused(&handle, p));
+                }
+            }
+
             // ── Event loop: background threads → controller ───────────────
             let rx = rx.clone();
             glib::spawn_future_local(async move {

@@ -702,6 +702,10 @@ impl ClipboardPopup {
         self.search_entry.set_text("");
     }
 
+    pub fn is_visible(&self) -> bool {
+        self.window.is_visible()
+    }
+
     pub fn hide(&self) {
         self.window.set_visible(false);
     }

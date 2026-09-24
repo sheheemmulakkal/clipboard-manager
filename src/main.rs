@@ -8,6 +8,7 @@ mod notify;
 mod paths;
 mod platform;
 mod store;
+mod tray;
 mod ui;
 
 use app::App;

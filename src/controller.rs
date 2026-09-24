@@ -67,7 +67,16 @@ impl Controller {
     pub fn handle_app(&self, ev: AppEvent) {
         match ev {
             AppEvent::Show { prev_window } => self.show(prev_window),
+            AppEvent::Toggle { prev_window } => {
+                if self.popup.is_visible() {
+                    self.popup.hide();
+                } else {
+                    self.show(prev_window);
+                }
+            }
             AppEvent::SetPaused(request) => self.set_paused(request),
+            AppEvent::OpenSettings => self.handle_menu(MenuAction::OpenSettings),
+            AppEvent::Quit => self.handle_menu(MenuAction::Quit),
         }
     }
 

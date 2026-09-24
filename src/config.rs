@@ -12,6 +12,7 @@ fn default_deduplicate() -> bool { true }
 fn default_popup_follow_cursor() -> bool { true }
 fn default_clear_undo_timeout_secs() -> u64 { 5 }
 fn default_max_text_bytes() -> usize { 1024 * 1024 }
+fn default_tray_icon() -> bool { true }
 
 // ── SizeConfig defaults ───────────────────────────────────────────────────────
 
@@ -125,6 +126,9 @@ pub struct AppConfig {
     pub popup_follow_cursor: bool,
     #[serde(default = "default_clear_undo_timeout_secs")]
     pub clear_undo_timeout_secs: u64,
+    /// Show an icon in the system tray. Default: true.
+    #[serde(default = "default_tray_icon")]
+    pub tray_icon: bool,
     /// Texts larger than this many bytes are not recorded. Default: 1 MiB.
     #[serde(default = "default_max_text_bytes")]
     pub max_text_bytes: usize,
@@ -149,6 +153,7 @@ impl Default for AppConfig {
             popup_follow_cursor:     default_popup_follow_cursor(),
             clear_undo_timeout_secs: default_clear_undo_timeout_secs(),
             max_text_bytes:          default_max_text_bytes(),
+            tray_icon:               default_tray_icon(),
             colors:                  ColorConfig::default(),
             sizes:                   SizeConfig::default(),
         }
