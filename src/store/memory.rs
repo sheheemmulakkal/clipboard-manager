@@ -7,6 +7,7 @@ pub struct MemoryStore {
     entries:     VecDeque<ClipboardEntry>,
     max_history: usize,
     deduplicate: bool,
+    next_id:     u64,
 }
 
 impl MemoryStore {
@@ -15,12 +16,20 @@ impl MemoryStore {
             entries: VecDeque::new(),
             max_history,
             deduplicate,
+            next_id: 1,
         }
     }
 }
 
 impl Store for MemoryStore {
+    fn next_id(&mut self) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
+    }
+
     fn add(&mut self, entry: ClipboardEntry) {
+        self.next_id = self.next_id.max(entry.id + 1);
         if self.deduplicate {
             let dupe = match &entry.content {
                 ClipboardContent::Text(t) => self.contains_text(t),
@@ -121,6 +130,25 @@ mod tests {
         assert_eq!(store.len(), 1);
         assert!(store.contains_text("b"));
         assert!(!store.contains_text("a"));
+    }
+
+    #[test]
+    fn next_id_is_monotonic_after_remove() {
+        let mut store = MemoryStore::new(10, false);
+        let a = store.next_id();
+        store.add(make_text(a, "a"));
+        let b = store.next_id();
+        store.add(make_text(b, "b"));
+        store.remove(b);
+        let c = store.next_id();
+        assert!(a < b && b < c);
+    }
+
+    #[test]
+    fn next_id_starts_after_loaded_ids() {
+        let mut store = MemoryStore::new(10, false);
+        store.add(make_text(41, "loaded"));
+        assert_eq!(store.next_id(), 42);
     }
 
     #[test]

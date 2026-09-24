@@ -98,8 +98,8 @@ impl App {
         let colors                  = self.config.colors.clone();
         let sizes                   = self.config.sizes.clone();
         let prev_window_id          = Rc::clone(&self.prev_window_id);
-        let image_dir               = self.image_dir.clone();
         let config_error            = self.config_error.clone();
+        let monitor_config          = self.config.clone();
 
         // ── Single-instance re-activation ─────────────────────────────────────
         // GTK enforces a single instance via D-Bus (application_id).
@@ -156,7 +156,7 @@ impl App {
             let store_for_cb      = Rc::clone(&store);
             let _monitor = ClipboardMonitor::start(
                 store_for_monitor,
-                AppConfig::default(),
+                &monitor_config,
                 move || {
                     let count = store_for_cb.borrow().len();
                     tracing::debug!("[monitor] store now has {} item(s)", count);

@@ -40,6 +40,10 @@ impl Store for PersistentStore {
         self.flush();
     }
 
+    fn next_id(&mut self) -> u64 {
+        self.inner.next_id()
+    }
+
     fn remove(&mut self, id: u64) {
         self.inner.remove(id);
         self.flush();
