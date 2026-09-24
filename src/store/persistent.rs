@@ -64,6 +64,11 @@ impl Store for PersistentStore {
         self.flush();
     }
 
+    fn restore(&mut self, entries: Vec<ClipboardEntry>) {
+        self.inner.restore(entries);
+        self.flush();
+    }
+
     fn clear(&mut self) {
         self.inner.clear();
         self.flush();

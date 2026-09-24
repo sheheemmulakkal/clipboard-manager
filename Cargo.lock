@@ -341,6 +341,7 @@ version = "1.2.0"
 dependencies = [
  "anyhow",
  "ashpd",
+ "async-channel",
  "chrono",
  "dirs",
  "evdev",

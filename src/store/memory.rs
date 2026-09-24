@@ -64,6 +64,22 @@ impl Store for MemoryStore {
         self.entries.retain(|e| e.pinned);
     }
 
+    fn restore(&mut self, entries: Vec<ClipboardEntry>) {
+        for e in entries {
+            if !self.entries.iter().any(|x| x.id == e.id) {
+                self.next_id = self.next_id.max(e.id + 1);
+                self.entries.push_back(e);
+            }
+        }
+        self.entries.make_contiguous().sort_by_key(|e| e.copied_at);
+        while self.entries.len() > self.max_history {
+            match self.entries.iter().position(|e| !e.pinned) {
+                Some(pos) => { self.entries.remove(pos); }
+                None => break,
+            }
+        }
+    }
+
     fn get_all(&self) -> Vec<&ClipboardEntry> {
         self.entries.iter().collect()
     }
@@ -149,6 +165,38 @@ mod tests {
         let mut store = MemoryStore::new(10, false);
         store.add(make_text(41, "loaded"));
         assert_eq!(store.next_id(), 42);
+    }
+
+    #[test]
+    fn restore_brings_back_cleared_entries_in_age_order() {
+        let mut store = MemoryStore::new(10, true);
+        let mut a = make_text(1, "a"); a.copied_at = 10;
+        let mut b = make_text(2, "b"); b.copied_at = 20;
+        store.add(a);
+        store.add(b);
+        let snapshot: Vec<ClipboardEntry> = store.get_all().into_iter().cloned().collect();
+        store.clear_unpinned();
+        let mut c = make_text(3, "c"); c.copied_at = 30;
+        store.add(c);
+        store.restore(snapshot);
+        let ids: Vec<u64> = store.get_all().iter().map(|e| e.id).collect();
+        assert_eq!(ids, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn restore_respects_max_history_and_skips_present() {
+        let mut store = MemoryStore::new(2, true);
+        let mut a = make_text(1, "a"); a.copied_at = 10;
+        let mut b = make_text(2, "b"); b.copied_at = 20;
+        store.add(a.clone());
+        store.add(b.clone());
+        store.clear_unpinned();
+        let mut c = make_text(3, "c"); c.copied_at = 30;
+        store.add(c.clone());
+        b.copied_at = 20;
+        store.restore(vec![a, b, c]);
+        let ids: Vec<u64> = store.get_all().iter().map(|e| e.id).collect();
+        assert_eq!(ids, vec![2, 3]); // oldest (1) evicted, 3 not duplicated
     }
 
     #[test]

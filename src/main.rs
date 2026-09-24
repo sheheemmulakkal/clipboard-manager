@@ -1,6 +1,8 @@
 mod app;
 mod clipboard;
 mod config;
+mod controller;
+mod events;
 mod hotkey;
 mod notify;
 mod paths;

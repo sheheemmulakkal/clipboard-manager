@@ -9,10 +9,11 @@ use gtk4::{
     Orientation, ScrolledWindow, SearchEntry, SelectionMode, Window, WindowHandle,
 };
 
-use crate::clipboard::entry::{ClipboardContent, ClipboardEntry};
+use crate::clipboard::entry::ClipboardEntry;
 use crate::config::{ColorConfig, SizeConfig};
+use crate::events::{PopupEvent, RowAction};
 use crate::platform::Platform;
-use crate::ui::item_row::{RowAction, build_item_row};
+use crate::ui::item_row::build_item_row;
 use crate::ui::style::generate_css;
 
 // ── Undo state ────────────────────────────────────────────────────────────────
@@ -22,20 +23,33 @@ struct UndoPending {
     on_undo:   Rc<dyn Fn()>,
 }
 
+// ── Event handler ─────────────────────────────────────────────────────────────
+
+/// Shared slot for the controller's event callback. Cloned into every
+/// signal handler; looked up at emit time so it can be set after the
+/// widgets are built.
+#[derive(Clone, Default)]
+struct EventHandler(Rc<RefCell<Option<Rc<dyn Fn(PopupEvent)>>>>);
+
+impl EventHandler {
+    fn emit(&self, ev: PopupEvent) {
+        // Clone the callback out first so it may re-enter the popup freely.
+        let cb = self.0.borrow().as_ref().map(Rc::clone);
+        if let Some(cb) = cb {
+            cb(ev);
+        }
+    }
+}
+
 // ── Public struct ─────────────────────────────────────────────────────────────
 
 pub struct ClipboardPopup {
     window:              Window,
     scrolled:            ScrolledWindow,
     list_box:            ListBox,
-    row_data:            Rc<RefCell<Vec<(u64, ClipboardContent, bool)>>>,
-    on_select:           Rc<RefCell<Option<Rc<dyn Fn(u64, ClipboardContent)>>>>,
-    on_copy:             Rc<RefCell<Option<Rc<dyn Fn(u64, ClipboardContent)>>>>,
-    on_terminal_paste:   Rc<RefCell<Option<Rc<dyn Fn(u64, String)>>>>,
-    on_remove:           Rc<RefCell<Option<Rc<dyn Fn(u64)>>>>,
-    on_pin:              Rc<RefCell<Option<Rc<dyn Fn(u64, bool)>>>>,
-    on_label:            Rc<RefCell<Option<Rc<dyn Fn(u64, Option<String>, Option<String>)>>>>,
-    on_clear:            Rc<RefCell<Option<Rc<dyn Fn()>>>>,
+    /// Entry id of each list row, by row index.
+    row_ids:             Rc<RefCell<Vec<u64>>>,
+    handler:             EventHandler,
     undo_bar:            gtk4::Box,
     undo_label:          Label,
     undo_pending:        Rc<RefCell<Option<UndoPending>>>,
@@ -150,14 +164,8 @@ impl ClipboardPopup {
         window.set_child(Some(&vbox));
 
         // ── Shared state ──────────────────────────────────────────────────────
-        let row_data:           Rc<RefCell<Vec<(u64, ClipboardContent, bool)>>>         = Rc::new(RefCell::new(vec![]));
-        let on_select:          Rc<RefCell<Option<Rc<dyn Fn(u64, ClipboardContent)>>>> = Rc::new(RefCell::new(None));
-        let on_copy:            Rc<RefCell<Option<Rc<dyn Fn(u64, ClipboardContent)>>>> = Rc::new(RefCell::new(None));
-        let on_terminal_paste:  Rc<RefCell<Option<Rc<dyn Fn(u64, String)>>>>           = Rc::new(RefCell::new(None));
-        let on_remove:          Rc<RefCell<Option<Rc<dyn Fn(u64)>>>>         = Rc::new(RefCell::new(None));
-        let on_pin:             Rc<RefCell<Option<Rc<dyn Fn(u64, bool)>>>>   = Rc::new(RefCell::new(None));
-        let on_label:           Rc<RefCell<Option<Rc<dyn Fn(u64, Option<String>, Option<String>)>>>> = Rc::new(RefCell::new(None));
-        let on_clear:           Rc<RefCell<Option<Rc<dyn Fn()>>>>            = Rc::new(RefCell::new(None));
+        let row_ids:            Rc<RefCell<Vec<u64>>>                        = Rc::new(RefCell::new(vec![]));
+        let handler:            EventHandler                                 = EventHandler::default();
         let undo_pending:       Rc<RefCell<Option<UndoPending>>>             = Rc::new(RefCell::new(None));
         let undo_tick:          Rc<RefCell<Option<glib::SourceId>>>          = Rc::new(RefCell::new(None));
         let suppress_close:     Rc<Cell<u32>>                                = Rc::new(Cell::new(0));
@@ -197,10 +205,15 @@ impl ClipboardPopup {
 
         // ── Wire: Clear All ───────────────────────────────────────────────────
         {
-            let oc = Rc::clone(&on_clear);
-            clear_btn.connect_clicked(move |_| {
-                let cb = oc.borrow().as_ref().map(Rc::clone);
-                if let Some(cb) = cb { cb(); }
+            let h = handler.clone();
+            clear_btn.connect_clicked(move |_| h.emit(PopupEvent::ClearAll));
+        }
+
+        // ── Wire: search ──────────────────────────────────────────────────────
+        {
+            let h = handler.clone();
+            search_entry.connect_search_changed(move |se| {
+                h.emit(PopupEvent::SearchChanged(se.text().to_string()));
             });
         }
 
@@ -224,8 +237,8 @@ impl ClipboardPopup {
 
             let win_ref = window.clone();
             let lb      = list_box.clone();
-            let rd      = Rc::clone(&row_data);
-            let os      = Rc::clone(&on_select);
+            let ids     = Rc::clone(&row_ids);
+            let h       = handler.clone();
             let se      = search_entry.clone();
 
             key_ctrl.connect_key_pressed(move |_, key, _, _| {
@@ -252,7 +265,7 @@ impl ClipboardPopup {
                         // When search entry has focus, Down always jumps to the
                         // first list item (row 0) rather than advancing from the
                         // currently selected row, which would skip row 0.
-                        let next = if se.has_focus() {
+                        let next = if has_focus_within(&se) {
                             0
                         } else {
                             lb.selected_row().map(|r| r.index() + 1).unwrap_or(0)
@@ -265,14 +278,9 @@ impl ClipboardPopup {
                     }
                     k if k == gdk4::Key::Return || k == gdk4::Key::KP_Enter => {
                         if let Some(row) = lb.selected_row() {
-                            let idx = row.index() as usize;
-                            let item = {
-                                let data = rd.borrow();
-                                data.get(idx).map(|(id, c, _)| (*id, c.clone()))
-                            };
-                            if let Some((id, content)) = item {
-                                let cb = os.borrow().as_ref().map(Rc::clone);
-                                if let Some(cb) = cb { cb(id, content); }
+                            let id = ids.borrow().get(row.index() as usize).copied();
+                            if let Some(id) = id {
+                                h.emit(PopupEvent::Row(id, RowAction::Paste));
                             }
                         }
                         Propagation::Stop
@@ -368,30 +376,20 @@ impl ClipboardPopup {
         }
 
         Self {
-            window, scrolled, list_box, row_data,
-            on_select, on_copy, on_terminal_paste, on_remove, on_pin, on_label, on_clear,
+            window, scrolled, list_box, row_ids, handler,
             undo_bar, undo_label, undo_pending, undo_tick,
             platform, nerd_font, search_entry, suppress_close,
         }
     }
 
+    /// Set the single receiver of everything the user does in the popup.
+    pub fn set_event_handler(&self, f: Rc<dyn Fn(PopupEvent)>) {
+        *self.handler.0.borrow_mut() = Some(f);
+    }
+
     // ── populate ──────────────────────────────────────────────────────────────
 
-    pub fn populate(
-        &self,
-        entries:            &[ClipboardEntry],
-        on_select:          impl Fn(u64, ClipboardContent) + 'static,
-        on_copy:            impl Fn(u64, ClipboardContent) + 'static,
-        on_terminal_paste:  impl Fn(u64, String)           + 'static,
-        on_remove:          impl Fn(u64)                   + 'static,
-        on_pin:             impl Fn(u64, bool)             + 'static,
-        on_label:           impl Fn(u64, Option<String>, Option<String>) + 'static,
-        on_clear:           impl Fn()                      + 'static,
-    ) {
-        cancel_tick(&self.undo_tick);
-        *self.undo_pending.borrow_mut() = None;
-        self.undo_bar.set_visible(false);
-
+    pub fn populate(&self, entries: &[ClipboardEntry]) {
         // If the popup is already visible this is a mutation repopulate (delete/pin/label).
         // Save the scroll position so we can restore it after rebuilding the list.
         let is_repopulate = self.window.is_visible();
@@ -405,54 +403,19 @@ impl ClipboardPopup {
             self.list_box.remove(&child);
         }
 
-        let on_select:         Rc<dyn Fn(u64, ClipboardContent)> = Rc::new(on_select);
-        let on_copy:           Rc<dyn Fn(u64, ClipboardContent)> = Rc::new(on_copy);
-        let on_terminal_paste: Rc<dyn Fn(u64, String)>           = Rc::new(on_terminal_paste);
-        let on_remove:         Rc<dyn Fn(u64)>                   = Rc::new(on_remove);
-        let on_pin:            Rc<dyn Fn(u64, bool)>             = Rc::new(on_pin);
-        let on_label:          Rc<dyn Fn(u64, Option<String>, Option<String>)> = Rc::new(on_label);
-        let on_clear:          Rc<dyn Fn()>                      = Rc::new(on_clear);
-
-        *self.on_select.borrow_mut()         = Some(Rc::clone(&on_select));
-        *self.on_copy.borrow_mut()           = Some(Rc::clone(&on_copy));
-        *self.on_terminal_paste.borrow_mut() = Some(Rc::clone(&on_terminal_paste));
-        *self.on_remove.borrow_mut()         = Some(Rc::clone(&on_remove));
-        *self.on_pin.borrow_mut()            = Some(Rc::clone(&on_pin));
-        *self.on_label.borrow_mut()          = Some(Rc::clone(&on_label));
-        *self.on_clear.borrow_mut()          = Some(Rc::clone(&on_clear));
-
-        let mut data = self.row_data.borrow_mut();
-        data.clear();
+        let mut ids = self.row_ids.borrow_mut();
+        ids.clear();
 
         for entry in entries {
-            data.push((entry.id, entry.content.clone(), entry.pinned));
-
-            let id      = entry.id;
-            let content = entry.content.clone();
-            let cb_sel  = Rc::clone(&on_select);
-            let cb_cpy  = Rc::clone(&on_copy);
-            let cb_tp   = Rc::clone(&on_terminal_paste);
-            let cb_rm   = Rc::clone(&on_remove);
-            let cb_pin  = Rc::clone(&on_pin);
-            let cb_lbl  = Rc::clone(&on_label);
-            let sc_row  = Rc::clone(&self.suppress_close);
-
-            let row = build_item_row(entry, self.nerd_font, sc_row, move |action| match action {
-                RowAction::Select => cb_sel(id, content.clone()),
-                RowAction::Copy   => cb_cpy(id, content.clone()),
-                RowAction::TerminalPaste => {
-                    // Terminal paste only makes sense for text.
-                    if let ClipboardContent::Text(t) = &content {
-                        cb_tp(id, t.clone());
-                    }
-                }
-                RowAction::Remove                    => cb_rm(id),
-                RowAction::TogglePin(pinned)         => cb_pin(id, pinned),
-                RowAction::SetLabel { label, color } => cb_lbl(id, label, color),
+            ids.push(entry.id);
+            let id = entry.id;
+            let h  = self.handler.clone();
+            let row = build_item_row(entry, self.nerd_font, Rc::clone(&self.suppress_close), move |action| {
+                h.emit(PopupEvent::Row(id, action));
             });
             self.list_box.append(&row);
         }
-        drop(data);
+        drop(ids);
 
         if entries.is_empty() {
             let row   = gtk4::ListBoxRow::new();
@@ -485,21 +448,11 @@ impl ClipboardPopup {
         on_undo:      impl Fn() + 'static,
         on_commit:    impl Fn() + 'static,
     ) {
-        let mut idx = 0i32;
-        loop {
-            match self.list_box.row_at_index(idx) {
-                None => break,
-                Some(row) => {
-                    let pinned = self.row_data
-                        .borrow()
-                        .get(idx as usize)
-                        .map(|(_, _, p)| *p)
-                        .unwrap_or(false);
-                    if pinned { idx += 1; } else { self.list_box.remove(&row); }
-                }
-            }
+        // A previous clear's undo window ends when a new one starts.
+        cancel_tick(&self.undo_tick);
+        if let Some(prev) = self.undo_pending.borrow_mut().take() {
+            (prev.on_commit)();
         }
-        self.row_data.borrow_mut().retain(|(_, _, pinned)| *pinned);
 
         let noun = if count == 1 { "item" } else { "items" };
         self.undo_label.set_text(&format!("{count} {noun} cleared  ·  Undo ({timeout_secs}s)"));
@@ -567,12 +520,6 @@ impl ClipboardPopup {
         });
     }
 
-    pub fn connect_search_changed(&self, cb: impl Fn(String) + 'static) {
-        self.search_entry.connect_search_changed(move |se| {
-            cb(se.text().to_string());
-        });
-    }
-
     pub fn clear_search(&self) {
         self.search_entry.set_text("");
     }
@@ -595,6 +542,16 @@ fn do_close(
     let state = up.borrow_mut().take();
     bar.set_visible(false);
     if let Some(s) = state { (s.on_commit)(); }
+}
+
+/// True when keyboard focus is on `widget` or one of its descendants.
+/// (A SearchEntry never has focus itself — its inner text widget does.)
+fn has_focus_within(widget: &impl IsA<gtk4::Widget>) -> bool {
+    let widget = widget.as_ref();
+    widget
+        .root()
+        .and_then(|r| r.focus())
+        .is_some_and(|f| &f == widget || f.is_ancestor(widget))
 }
 
 fn cancel_tick(ut: &Rc<RefCell<Option<glib::SourceId>>>) {

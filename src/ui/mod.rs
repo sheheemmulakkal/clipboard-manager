@@ -1,3 +1,4 @@
+pub mod filter;
 pub mod item_row;
 pub mod popup;
 pub mod style;

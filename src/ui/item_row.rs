@@ -6,7 +6,8 @@ use gtk4::prelude::*;
 use gtk4::glib;
 use gtk4::{Button, Entry, GestureClick, Label, ListBoxRow, Orientation, Popover};
 
-use crate::clipboard::entry::{ClipboardContent, ClipboardEntry};
+use crate::clipboard::entry::{ClipboardContent, ClipboardEntry, EntryMeta};
+use crate::events::RowAction;
 
 // ── Color palette ─────────────────────────────────────────────────────────────
 
@@ -48,16 +49,6 @@ const ICONS_NERD: Icons = Icons {
     copy:     "󰆏",   // nf-md-content_copy
     terminal: "󰆍",   // nf-md-console
 };
-
-#[derive(Clone)]
-pub enum RowAction {
-    Select,
-    Copy,
-    TerminalPaste,
-    Remove,
-    TogglePin(bool), // new pinned state after toggle
-    SetLabel { label: Option<String>, color: Option<String> },
-}
 
 pub fn build_item_row(
     entry:          &ClipboardEntry,
@@ -181,7 +172,6 @@ pub fn build_item_row(
 
     // ── Wire up callbacks ───────────────────────────────────────────────
     let id = entry.id;
-    let currently_pinned = entry.pinned;
     let entry_label = entry.label.clone();
     let entry_color = entry.color.clone();
 
@@ -190,7 +180,7 @@ pub fn build_item_row(
     let gesture = GestureClick::new();
     gesture.set_button(1);
     gesture.connect_released(move |_, _, _, _| {
-        cb_select(RowAction::Select);
+        cb_select(RowAction::Paste);
     });
     row.add_controller(gesture);
 
@@ -203,13 +193,13 @@ pub fn build_item_row(
     // Terminal paste button → paste via Ctrl+Shift+V
     let cb_term = Rc::clone(&on_action);
     term_btn.connect_clicked(move |_| {
-        cb_term(RowAction::TerminalPaste);
+        cb_term(RowAction::PasteTerminal);
     });
 
     // Pin button
     let cb_pin = Rc::clone(&on_action);
     pin_btn.connect_clicked(move |_| {
-        cb_pin(RowAction::TogglePin(!currently_pinned));
+        cb_pin(RowAction::TogglePin);
     });
 
     // Delete button
@@ -397,7 +387,7 @@ fn build_label_popover(
                 let text  = title_entry_c.text().to_string();
                 let label = if text.is_empty() { None } else { Some(text) };
                 let color = sc_c.borrow().clone();
-                cb(RowAction::SetLabel { label, color });
+                cb(RowAction::SetMeta(EntryMeta { label, color }));
             }
             committed_c.set(false);
 

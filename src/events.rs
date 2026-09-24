@@ -1,0 +1,32 @@
+//! Messages that drive the controller.
+//!
+//! * [`AppEvent`] — sent from any thread (hotkey listener, re-activation)
+//!   through an `async_channel` and handled on the GTK main thread.
+//! * [`PopupEvent`] — emitted by the popup UI on the main thread.
+
+use crate::clipboard::entry::EntryMeta;
+
+pub enum AppEvent {
+    /// Open the popup; `prev_window` is the X11 window focused before it.
+    Show { prev_window: Option<u64> },
+}
+
+/// Something the user did to one history row.
+#[derive(Clone, Debug)]
+pub enum RowAction {
+    /// Copy to the clipboard, hide the popup, paste into the previous window.
+    Paste,
+    /// Like `Paste` but with Ctrl+Shift+V (terminals). Text only.
+    PasteTerminal,
+    /// Copy to the clipboard only.
+    Copy,
+    Remove,
+    TogglePin,
+    SetMeta(EntryMeta),
+}
+
+pub enum PopupEvent {
+    Row(u64, RowAction),
+    SearchChanged(String),
+    ClearAll,
+}

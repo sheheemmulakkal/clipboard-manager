@@ -22,4 +22,8 @@ pub trait Store: Send + Sync {
     fn set_label(&mut self, id: u64, label: Option<String>, color: Option<String>);
     /// Remove all entries that are not pinned.
     fn clear_unpinned(&mut self);
+    /// Put previously removed entries back (undo). Entries whose id is
+    /// already present are ignored; history stays ordered by age and
+    /// within `max_history`.
+    fn restore(&mut self, entries: Vec<ClipboardEntry>);
 }

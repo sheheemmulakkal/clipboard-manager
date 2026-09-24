@@ -12,6 +12,13 @@ impl Default for ClipboardContent {
     }
 }
 
+/// User-editable metadata of an entry.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EntryMeta {
+    pub label: Option<String>,
+    pub color: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ClipboardEntry {
     pub id:         u64,
