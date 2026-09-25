@@ -4,6 +4,25 @@ All notable changes to Clipboard Manager will be documented here.
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-09-25
+
+### Fixed
+- Installing or upgrading could start **two copies** (two tray icons): the
+  package's post-install script started one without the session D-Bus, so
+  it couldn't see the copy `install.sh` started. The app now also uses a
+  lock file, the post-install script passes the full session environment,
+  and `install.sh` only starts the app if it isn't running.
+- A panic inside a GTK callback (e.g. while reading the clipboard) aborted
+  the whole app; such callbacks now recover, log the error and keep running.
+- `install.sh` no longer hangs forever on a stalled download (timeouts and
+  retries, with a clear error message).
+
+### Changed
+- Panics are recorded with location and backtrace in
+  `~/.local/state/clipboard-manager/crash.log`.
+- The previous run's log is kept as `clipboard-manager.log.1` instead of
+  being overwritten on every start.
+
 ## [2.0.0] - 2026-09-24
 
 ### Added

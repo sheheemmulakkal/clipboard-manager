@@ -114,7 +114,9 @@ impl ClipboardMonitor {
         // at startup may come from an app we would have ignored (and was
         // most likely recorded by the previous run already).
         let state_c = Rc::clone(&state);
-        clipboard.connect_changed(move |cb| on_clipboard_changed(cb, &state_c));
+        clipboard.connect_changed(move |cb| {
+            crate::crash::guarded("clipboard change", || on_clipboard_changed(cb, &state_c));
+        });
 
         Self
     }
@@ -171,10 +173,12 @@ fn on_clipboard_changed(clipboard: &gdk4::Clipboard, state: &Rc<State>) {
     if has_image && !has_text {
         clipboard.read_texture_async(
             None::<&gdk4::gio::Cancellable>,
-            move |result: Result<Option<gdk4::Texture>, glib::Error>| match result {
-                Ok(Some(texture)) => capture_image(&state, &texture),
-                Ok(None) => tracing::debug!("[monitor] clipboard returned no texture"),
-                Err(e) => tracing::debug!("[monitor] texture read error: {e}"),
+            move |result: Result<Option<gdk4::Texture>, glib::Error>| {
+                crate::crash::guarded("image capture", || match result {
+                    Ok(Some(texture)) => capture_image(&state, &texture),
+                    Ok(None) => tracing::debug!("[monitor] clipboard returned no texture"),
+                    Err(e) => tracing::debug!("[monitor] texture read error: {e}"),
+                });
             },
         );
     } else if has_text {
@@ -182,7 +186,7 @@ fn on_clipboard_changed(clipboard: &gdk4::Clipboard, state: &Rc<State>) {
             None::<&gdk4::gio::Cancellable>,
             move |result: Result<Option<glib::GString>, glib::Error>| {
                 if let Ok(Some(text)) = result {
-                    capture_text(&state, text.to_string());
+                    crate::crash::guarded("text capture", || capture_text(&state, text.to_string()));
                 }
             },
         );
@@ -196,7 +200,9 @@ fn refuse_current_text(clipboard: &gdk4::Clipboard, state: &Rc<State>) {
         None::<&gdk4::gio::Cancellable>,
         move |result: Result<Option<glib::GString>, glib::Error>| {
             if let Ok(Some(text)) = result {
-                state.refused.borrow_mut().insert(digest(text.as_bytes()));
+                crate::crash::guarded("refuse secret", || {
+                    state.refused.borrow_mut().insert(digest(text.as_bytes()));
+                });
             }
         },
     );

@@ -96,6 +96,9 @@ impl App {
     pub fn run(&self) -> Result<()> {
         tracing_subscriber::fmt()
             .with_writer(std::io::stderr)
+            // Never eprint!() about failed log writes: a panic in a GTK
+            // callback aborts the process.
+            .log_internal_errors(false)
             .with_ansi(std::env::var_os("_CM_DAEMON").is_none())
             .with_env_filter(
                 tracing_subscriber::EnvFilter::try_from_default_env()
@@ -137,10 +140,13 @@ impl App {
                 let controller = slot.borrow().clone();
                 // (Output can't be printed into the caller's terminal before
                 // glib 2.80, so remote commands report via the exit code.)
-                let ok = match (crate::cli::parse(&args), controller) {
-                    (Ok(cmd), Some(c)) => c.run_command(cmd, token),
-                    _ => false,
-                };
+                let mut ok = false;
+                crate::crash::guarded("command line", || {
+                    ok = match (crate::cli::parse(&args), controller) {
+                        (Ok(cmd), Some(c)) => c.run_command(cmd, token),
+                        _ => false,
+                    };
+                });
                 if ok { 0 } else { 1 }
             });
         }
@@ -173,7 +179,7 @@ impl App {
             let _monitor = ClipboardMonitor::start(Rc::clone(&store), &config, Arc::clone(&platform), paused, move || {
                 tracing::debug!("[monitor] store now has {} item(s)", store_for_cb.borrow().len());
                 if let Some(c) = controller_cb.upgrade() {
-                    c.on_store_changed();
+                    crate::crash::guarded("refresh after capture", || c.on_store_changed());
                 }
             });
 
@@ -218,7 +224,7 @@ impl App {
             glib::spawn_future_local(async move {
                 let _keep_hotkey = hotkey_manager;
                 while let Ok(ev) = rx.recv().await {
-                    controller.handle_app(ev);
+                    crate::crash::guarded("app event", || controller.handle_app(ev));
                 }
             });
         });

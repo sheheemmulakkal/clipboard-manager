@@ -113,7 +113,8 @@ see the generated file.
 | `~/.config/clipboard-manager/config.toml` | Configuration |
 | `~/.local/share/clipboard-manager/history.bin` | History (text, pins, labels, tags, colours) |
 | `~/.local/share/clipboard-manager/images/` | Captured images and thumbnails |
-| `~/.local/state/clipboard-manager/clipboard-manager.log` | Log of the background process |
+| `~/.local/state/clipboard-manager/clipboard-manager.log` | Log of the background process (previous run: `.log.1`) |
+| `~/.local/state/clipboard-manager/crash.log` | Details of internal errors — attach it to bug reports |
 | `~/.local/state/clipboard-manager/portal-restore-token` | Wayland paste permission |
 
 ## Upgrade

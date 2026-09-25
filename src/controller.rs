@@ -64,7 +64,7 @@ impl Controller {
         let weak = Rc::downgrade(&this);
         this.popup.set_event_handler(Rc::new(move |ev| {
             if let Some(c) = weak.upgrade() {
-                c.handle_popup(ev);
+                crate::crash::guarded("popup event", || c.handle_popup(ev));
             }
         }));
         this

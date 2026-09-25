@@ -1,4 +1,4 @@
-.TH CLIPBOARD-MANAGER 1 "2026" "clipboard-manager 2.0.0" "User Commands"
+.TH CLIPBOARD-MANAGER 1 "2026" "clipboard-manager 2.0.1" "User Commands"
 .SH NAME
 clipboard-manager \- clipboard history for Linux (X11 and Wayland)
 .SH SYNOPSIS
@@ -67,7 +67,11 @@ User configuration (every option is documented in the file).
 History and captured images (private to the user).
 .TP
 ~/.local/state/clipboard-manager/clipboard-manager.log
-Log of the background process.
+Log of the background process (the previous run is kept as
+clipboard-manager.log.1).
+.TP
+~/.local/state/clipboard-manager/crash.log
+Details of any internal error (panic), for bug reports.
 .SH ENVIRONMENT
 .TP
 .B CLIPBOARD_MANAGER_PROFILE=dev

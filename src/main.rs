@@ -3,8 +3,10 @@ mod cli;
 mod clipboard;
 mod config;
 mod controller;
+mod crash;
 mod events;
 mod hotkey;
+mod instance;
 mod notify;
 mod paths;
 mod platform;
@@ -16,6 +18,7 @@ use app::App;
 use glib::prelude::ToVariant;
 
 fn main() {
+    crash::install_hook();
     let args: Vec<String> = std::env::args().collect();
     let command = match cli::parse(&args) {
         Ok(c) => c,
@@ -64,13 +67,30 @@ fn main() {
     // ── Already running? Just open its popup. ────────────────────────────────
     // (Before loading history / image GC / truncating the log file, which
     // would race with the running instance.)
-    if std::env::var_os("_CM_DAEMON").is_none() && is_running() {
-        let show = vec![args[0].clone(), "show".to_string()];
-        std::process::exit(send_to_running(&show, &cli::Command::Show));
+    if std::env::var_os("_CM_DAEMON").is_none() {
+        if is_running() {
+            let show = vec![args[0].clone(), "show".to_string()];
+            std::process::exit(send_to_running(&show, &cli::Command::Show));
+        }
+        // Running, but not reachable over D-Bus from here (e.g. started
+        // without a session bus): never start a second copy.
+        if instance::is_locked(&instance::lock_path()) {
+            eprintln!("clipboard-manager is already running");
+            return;
+        }
     }
 
     // ── Auto-daemonize (detach from terminal) ────────────────────────────────
     daemonize_if_needed();
+
+    // ── Single instance (independent of D-Bus) ───────────────────────────────
+    // Held until exit. A reload's new instance waits for the old one to go.
+    let Some(_instance_lock) =
+        instance::lock_with_retry(&instance::lock_path(), std::time::Duration::from_secs(3))
+    else {
+        eprintln!("clipboard-manager is already running");
+        return;
+    };
 
     if let Err(e) = App::new().and_then(|a| a.run()) {
         eprintln!("Error: {:#}", e);
@@ -131,9 +151,9 @@ fn reload_daemon() {
     if was_running {
         let args = vec!["clipboard-manager".to_string(), "quit".to_string()];
         send_to_running(&args, &cli::Command::Quit);
-        // Wait for the old instance to release its D-Bus name.
+        // Wait for the old instance to release its D-Bus name and lock.
         for _ in 0..50 {
-            if !is_running() {
+            if !is_running() && !instance::is_locked(&instance::lock_path()) {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
@@ -196,18 +216,20 @@ fn daemonize_if_needed() {
 }
 
 /// Start the detached daemon child. Its stderr (where the log goes) is
-/// written to `$XDG_STATE_HOME/clipboard-manager/clipboard-manager.log`,
-/// truncated on every start, so problems are diagnosable after the fact.
+/// written to `$XDG_STATE_HOME/clipboard-manager/clipboard-manager.log`;
+/// the previous run's log is kept as `clipboard-manager.log.1`.
 /// `show_popup` opens the popup once the new instance is up.
 fn spawn_daemon(exe: &std::path::Path, show_popup: bool) -> std::io::Result<std::process::Child> {
     use std::os::unix::fs::OpenOptionsExt;
     use std::process::Stdio;
+    let log = paths::state_dir().join("clipboard-manager.log");
+    instance::rotate(&log);
     let stderr = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
         .mode(0o600)
-        .open(paths::state_dir().join("clipboard-manager.log"))
+        .open(&log)
         .map(Stdio::from)
         .unwrap_or_else(|_| Stdio::null());
     let mut cmd = std::process::Command::new(exe);
