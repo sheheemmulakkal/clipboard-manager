@@ -18,23 +18,34 @@ echo ""
 # Try to start the app immediately so the user doesn't need to log out.
 # Runs only when invoked interactively (SUDO_USER is set and a display exists).
 #
-# Problem: postinst runs inside dpkg as root. "su - USER" opens a login shell
-# which resets the environment — $DISPLAY is lost and GTK silently fails.
-# Fix: read DISPLAY from the user's running processes via /proc, then pass it
-# explicitly to runuser (which inherits the env without a login-shell reset).
+# postinst runs inside dpkg as root, so the user's session environment is
+# gone. Copy it from one of the user's graphical processes (preferably
+# gnome-shell): DISPLAY alone is not enough — without the session D-Bus
+# address the app can't see an already-running copy, and without
+# WAYLAND_DISPLAY it would use the X11 backends on a Wayland session.
 if [ -n "$SUDO_USER" ] && command -v clipboard-manager >/dev/null 2>&1; then
   SUDO_UID=$(id -u "$SUDO_USER" 2>/dev/null) || true
   if [ -n "$SUDO_UID" ]; then
-    USER_DISPLAY=$(
-      pgrep -u "$SUDO_UID" 2>/dev/null \
-        | xargs -I{} cat /proc/{}/environ 2>/dev/null \
-        | tr '\0' '\n' \
-        | grep -m1 '^DISPLAY=' \
-        | cut -d= -f2-
-    ) || true
-    if [ -n "$USER_DISPLAY" ]; then
-      DISPLAY="$USER_DISPLAY" runuser -u "$SUDO_USER" -- \
-        bash -c 'nohup clipboard-manager >/dev/null 2>&1 &' || true
+    SRC_PID=$(pgrep -u "$SUDO_UID" -x gnome-shell 2>/dev/null | head -1) || true
+    if [ -z "$SRC_PID" ]; then
+      for p in $(pgrep -u "$SUDO_UID" 2>/dev/null); do
+        if tr '\0' '\n' < "/proc/$p/environ" 2>/dev/null | grep -q '^DISPLAY='; then
+          SRC_PID=$p
+          break
+        fi
+      done
+    fi
+    if [ -n "$SRC_PID" ]; then
+      SESSION_ENV=$(
+        tr '\0' '\n' < "/proc/$SRC_PID/environ" 2>/dev/null \
+          | grep -E '^(DISPLAY|WAYLAND_DISPLAY|XAUTHORITY|DBUS_SESSION_BUS_ADDRESS|XDG_RUNTIME_DIR|XDG_SESSION_TYPE|XDG_CURRENT_DESKTOP)='
+      ) || true
+      if printf '%s\n' "$SESSION_ENV" | grep -q '^DISPLAY=\|^WAYLAND_DISPLAY='; then
+        # The app itself refuses to start a second copy (lock file).
+        # shellcheck disable=SC2086
+        runuser -u "$SUDO_USER" -- env $SESSION_ENV \
+          bash -c 'nohup clipboard-manager >/dev/null 2>&1 &' || true
+      fi
     fi
   fi
 fi

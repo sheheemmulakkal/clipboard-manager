@@ -36,12 +36,14 @@ if [[ "$ARCH" != "amd64" && "$ARCH" != "arm64" ]]; then
 fi
 
 # Must have curl or wget
+# Time out and retry instead of hanging on a stalled connection.
 if command -v curl &>/dev/null; then
-  DOWNLOAD="curl -fsSL"
-  DOWNLOAD_FILE="curl -fSL -o"
+  CURL_OPTS="--connect-timeout 15 --retry 3 --retry-delay 2 --speed-limit 1024 --speed-time 30"
+  DOWNLOAD="curl -fsSL $CURL_OPTS"
+  DOWNLOAD_FILE="curl -fSL $CURL_OPTS -o"
 elif command -v wget &>/dev/null; then
-  DOWNLOAD="wget -qO-"
-  DOWNLOAD_FILE="wget -q -O"
+  DOWNLOAD="wget -qO- --timeout=15 --tries=3"
+  DOWNLOAD_FILE="wget -q --timeout=15 --tries=3 -O"
 else
   error "curl or wget is required. Install with: sudo apt install curl"
 fi
@@ -71,7 +73,8 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 DEB_FILE="${TMP_DIR}/${APP}.deb"
 
 info "Downloading ${APP} ${VERSION}..."
-$DOWNLOAD_FILE "$DEB_FILE" "$DEB_URL" || error "Download failed."
+$DOWNLOAD_FILE "$DEB_FILE" "$DEB_URL" \
+  || error "Download failed (network or GitHub problem). Try again in a minute, or download the .deb from https://github.com/${REPO}/releases/latest"
 chmod 644 "$DEB_FILE"
 success "Downloaded."
 
@@ -83,7 +86,10 @@ sudo apt-get install -y "$DEB_FILE" || error "Installation failed."
 # The script is still running as the current user here (only the apt-get call
 # above used sudo), so we can launch the app directly without needing $DISPLAY
 # to survive through sudo.
-if command -v clipboard-manager &>/dev/null; then
+# The package's post-install script usually started it already.
+if pgrep -u "$(id -u)" -f '^(/usr/bin/)?clipboard-manager( |$)' >/dev/null; then
+  success "clipboard-manager is running."
+elif command -v clipboard-manager &>/dev/null; then
   nohup clipboard-manager &>/dev/null &
   disown
   success "Started clipboard-manager in background."

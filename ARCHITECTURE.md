@@ -33,6 +33,8 @@ src/
   config.rs          AppConfig (TOML), theme name, colour/size overrides
   paths.rs           Data/config/state dirs (0700), image paths, dev profile ids
   notify.rs          Desktop notifications for errors the user must act on
+  instance.rs        Single-instance lock file, log rotation
+  crash.rs           Panic containment (`guarded`) and crash.log hook
   tray.rs            StatusNotifierItem tray icon (ksni)
   clipboard/
     entry.rs         ClipboardEntry, ClipboardContent, EntryMeta
@@ -110,6 +112,17 @@ GApplication with `HANDLES_COMMAND_LINE`. A second `clipboard-manager
 <command>` forwards its command line over D-Bus to the running instance;
 results come back as the exit status (printing into the caller's terminal
 needs glib 2.80). `list` reads history.bin in the client process.
+
+A lock file (`~/.local/state/clipboard-manager/instance.lock`, `flock`)
+also guards against a second daemon on a different D-Bus session bus
+(e.g. one started from a package script without the session environment),
+which GApplication alone cannot detect.
+
+### Panics
+A panic inside a GTK callback would abort the process (it cannot unwind
+through C). Event handlers and clipboard callbacks run inside
+`crash::guarded`, which catches the panic and logs it; the panic hook
+writes the location and a backtrace to `crash.log`.
 
 ## Data model
 
